@@ -1,0 +1,40 @@
+# Macro Data Sources Configuration
+# Free/public sources are enabled by default.
+# Paid providers remain optional and disabled unless explicitly configured.
+
+sources:
+  official:
+    name: "Official Macro Data"
+    adapter_class: "data.ingestion.macro.providers.official_macro_adapter.OfficialMacroAdapter"
+    enabled: true
+    config:
+      series_catalog: {}
+      event_calendar_catalog: {}
+      allow_fred: false
+      fred_series: {}
+
+  generic_news:
+    name: "Generic Free News"
+    adapter_class: "data.ingestion.macro.providers.generic_news_adapter.GenericNewsAdapter"
+    enabled: true
+    config:
+      allow_paid_sources: false
+      rss_feeds:
+        pib_economy: "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3"
+        economic_times: "https://economictimes.indiatimes.com/rssfeedsdefault.cms"
+      csv_paths:
+        news_csv: ""
+
+  bloomberg:
+    name: "Bloomberg Terminal"
+    adapter_class: "data.ingestion.macro.providers.bloomberg_adapter.BloombergMacroAdapter"
+    enabled: false
+    config:
+      mock_mode: true
+
+  reuters:
+    name: "Reuters"
+    adapter_class: "data.ingestion.macro.providers.reuters_adapter.ReutersMacroAdapter"
+    enabled: false
+    config:
+      mock_mode: true

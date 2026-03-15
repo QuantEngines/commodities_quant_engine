@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+
+artifacts/
+results/
+cache/
+data/cache/
+raw/
+
+.coverage
+htmlcov/
+
+.ipynb_checkpoints/

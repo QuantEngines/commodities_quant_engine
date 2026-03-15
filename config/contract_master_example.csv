@@ -1,0 +1,5 @@
+commodity,symbol,expiry_date,last_trading_date,lot_size,tick_size,multiplier,exchange,segment,quote_currency,settlement_type,source
+GOLD,GOLDAPR26,2026-04-28,2026-04-26,100,1.0,100,MCX,bullion,INR,cash,local_contract_master
+GOLD,GOLDMAY26,2026-05-28,2026-05-26,100,1.0,100,MCX,bullion,INR,cash,local_contract_master
+CRUDEOIL,CRUDEOILAPR26,2026-04-17,2026-04-16,100,1.0,100,MCX,energy,INR,cash,local_contract_master
+CRUDEOIL,CRUDEOILMAY26,2026-05-19,2026-05-18,100,1.0,100,MCX,energy,INR,cash,local_contract_master

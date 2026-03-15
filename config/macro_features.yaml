@@ -1,0 +1,236 @@
+# Macro Feature Engineering Configuration
+# Defines how raw macro data is transformed into features
+
+features:
+
+  # Inflation Features
+  inflation:
+    enabled: true
+    transforms:
+      - name: "cpi_yoy"
+        source_series: ["IN_CPI_YOY", "US_CPI_YOY"]
+        transform: "yoy_change"
+        lag_days: 0
+        frequency: "monthly"
+        missing_policy: "forward_fill"
+        z_score_window: 252
+
+      - name: "cpi_mom"
+        source_series: ["IN_CPI_YOY", "US_CPI_YOY"]
+        transform: "mom_change"
+        lag_days: 0
+        frequency: "monthly"
+        missing_policy: "forward_fill"
+
+      - name: "inflation_trend"
+        source_series: ["IN_CPI_YOY"]
+        transform: "rolling_mean"
+        window: 3
+        lag_days: 0
+        frequency: "monthly"
+        missing_policy: "forward_fill"
+
+      - name: "inflation_acceleration"
+        source_series: ["IN_CPI_YOY"]
+        transform: "second_difference"
+        lag_days: 0
+        frequency: "monthly"
+        missing_policy: "forward_fill"
+
+      - name: "in_us_inflation_diff"
+        source_series: ["IN_CPI_YOY", "US_CPI_YOY"]
+        transform: "difference"
+        lag_days: 0
+        frequency: "monthly"
+        missing_policy: "drop"
+
+  # Growth Features
+  growth:
+    enabled: true
+    transforms:
+      - name: "gdp_yoy"
+        source_series: ["IN_GDP_YOY", "US_GDP_YOY"]
+        transform: "yoy_change"
+        lag_days: 0
+        frequency: "quarterly"
+        missing_policy: "forward_fill"
+
+      - name: "iip_yoy"
+        source_series: ["IN_IIP_YOY"]
+        transform: "yoy_change"
+        lag_days: 0
+        frequency: "monthly"
+        missing_policy: "forward_fill"
+
+      - name: "growth_trend"
+        source_series: ["IN_GDP_YOY"]
+        transform: "rolling_mean"
+        window: 4
+        lag_days: 0
+        frequency: "quarterly"
+        missing_policy: "forward_fill"
+
+      - name: "growth_acceleration"
+        source_series: ["IN_GDP_YOY"]
+        transform: "second_difference"
+        lag_days: 0
+        frequency: "quarterly"
+        missing_policy: "drop"
+
+  # Rates Features
+  rates:
+    enabled: true
+    transforms:
+      - name: "rbi_rate"
+        source_series: ["IN_RBI_RATE"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "fed_rate"
+        source_series: ["US_FED_RATE"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "rate_change_recent"
+        source_series: ["IN_RBI_RATE", "US_FED_RATE"]
+        transform: "change_since_days"
+        days: 30
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "zero"
+
+      - name: "real_rate_in"
+        source_series: ["IN_RBI_RATE", "IN_CPI_YOY"]
+        transform: "rate_minus_inflation"
+        lag_days: 0
+        frequency: "monthly"
+        missing_policy: "drop"
+
+      - name: "real_rate_us"
+        source_series: ["US_FED_RATE", "US_CPI_YOY"]
+        transform: "rate_minus_inflation"
+        lag_days: 0
+        frequency: "monthly"
+        missing_policy: "drop"
+
+  # FX Features
+  fx:
+    enabled: true
+    transforms:
+      - name: "usd_inr"
+        source_series: ["FX_USD_INR"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "usd_inr_change"
+        source_series: ["FX_USD_INR"]
+        transform: "pct_change"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "zero"
+
+      - name: "usd_inr_trend"
+        source_series: ["FX_USD_INR"]
+        transform: "rolling_mean"
+        window: 20
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "dxy"
+        source_series: ["FX_DXY"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+  # Event Features
+  events:
+    enabled: true
+    transforms:
+      - name: "days_since_cpi_release"
+        source_series: ["IN_CPI_EVENT"]
+        transform: "days_since_event"
+        event_type: "inflation_release"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "max_days"
+
+      - name: "days_since_rate_decision"
+        source_series: ["IN_RBI_MEETING"]
+        transform: "days_since_event"
+        event_type: "central_bank_meeting"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "max_days"
+
+      - name: "event_risk_window"
+        source_series: ["MACRO_EVENTS"]
+        transform: "event_risk_flag"
+        risk_window_days: 3
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "false"
+
+  # News Features
+  news:
+    enabled: true
+    transforms:
+      - name: "macro_sentiment_score"
+        source_series: ["NEWS_HEADLINES"]
+        transform: "sentiment_aggregate"
+        topics: ["inflation", "growth", "rates"]
+        window_days: 7
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "zero"
+
+      - name: "inflation_news_intensity"
+        source_series: ["NEWS_HEADLINES"]
+        transform: "topic_intensity"
+        topics: ["inflation", "prices"]
+        window_days: 7
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "zero"
+
+      - name: "hawkish_dovish_score"
+        source_series: ["NEWS_HEADLINES"]
+        transform: "hawkish_dovish_sentiment"
+        window_days: 30
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "zero"
+
+      - name: "commodity_news_volume"
+        source_series: ["NEWS_HEADLINES"]
+        transform: "commodity_news_count"
+        window_days: 7
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "zero"
+
+# Feature validation rules
+validation:
+  max_missing_pct: 0.5  # Maximum allowed missing data percentage
+  min_history_days: 252  # Minimum history required for feature
+  outlier_std_threshold: 5  # Z-score threshold for outlier detection
+
+# Feature normalization settings
+normalization:
+  method: "z_score"  # "z_score", "robust_z", "min_max"
+  window_days: 252  # Rolling window for z-score calculation
+  center: true
+  scale: true
+
+# Feature caching settings
+caching:
+  enabled: true
+  cache_dir: "data/cache/macro_features"
+  max_age_days: 1  # Maximum age of cached features

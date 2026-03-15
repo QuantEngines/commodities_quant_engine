@@ -1,0 +1,39 @@
+# Example local-data mapping for the free/local-first provider stack.
+# Update these paths to match your machine and data folders.
+
+market_data_sources:
+  MCX:
+    local_catalog:
+      GOLD: "local_data/market/gold_ohlcv.csv"
+      "spot:GOLD": "local_data/market/gold_spot.csv"
+    allow_yfinance: false
+
+contract_master:
+  contract_catalog_path: "config/contract_master_example.csv"
+
+macro_sources:
+  official:
+    series_catalog:
+      IN_CPI_YOY:
+        path: "local_data/macro/in_cpi.csv"
+        timestamp_column: "timestamp"
+        value_column: "value"
+        unit: "percent"
+        frequency: "monthly"
+        source: "MOSPI"
+      FX_USD_INR:
+        path: "local_data/macro/usd_inr.csv"
+        timestamp_column: "timestamp"
+        value_column: "value"
+        unit: "fx_rate"
+        frequency: "daily"
+        source: "FBIL"
+    event_calendar_catalog:
+      IN:
+        path: "local_data/macro/india_macro_calendar.csv"
+        timestamp_column: "timestamp"
+
+news_sources:
+  generic_news:
+    csv_paths:
+      news_csv: "local_data/news/macro_news.csv"
