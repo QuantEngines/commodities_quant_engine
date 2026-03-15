@@ -290,11 +290,11 @@ timestamp,headline,content,source
 2025-02-10 09:30:00,Oil slips on demand concerns,Crude prices softened after weak demand data,LOCAL
 ```
 
-More schema detail is in [`docs/local_data_schema.md`](/Users/pramitdutta/Desktop/Trading%20Engines/commodities_quant_engine/docs/local_data_schema.md).
+More schema detail is in [`docs/local_data_schema.md`](docs/local_data_schema.md).
 
-An example mapping file is available at [`config/local_data_example.yaml`](/Users/pramitdutta/Desktop/Trading%20Engines/commodities_quant_engine/config/local_data_example.yaml).
+An example mapping file is available at [`config/local_data_example.yaml`](config/local_data_example.yaml).
 
-For curated local contract metadata, an example catalog is available at [`config/contract_master_example.csv`](/Users/pramitdutta/Desktop/Trading%20Engines/commodities_quant_engine/config/contract_master_example.csv). If you point `settings.contract_master.contract_catalog_path` to a real local catalog, the engine will prefer those contracts over deterministic fallback symbols when selecting the active contract.
+For curated local contract metadata, an example catalog is available at [`config/contract_master_example.csv`](config/contract_master_example.csv). If you point `settings.contract_master.contract_catalog_path` to a real local catalog, the engine will prefer those contracts over deterministic fallback symbols when selecting the active contract.
 
 For the optional `commodities-api.com` adapter, add your API key and explicit symbol map through settings or environment-backed overrides. It is treated as reference-data support, not as a replacement for native MCX futures history.
 
@@ -305,7 +305,7 @@ For the optional `commodities-api.com` adapter, add your API key and explicit sy
 From the parent directory of this repo:
 
 ```bash
-cd "/Users/pramitdutta/Desktop/Trading Engines"
+cd /path/to/parent/of/commodities_quant_engine
 python commodities_quant_engine/run_local.py
 ```
 
@@ -320,56 +320,56 @@ After an interactive selection, the launcher now enters live polling mode by def
 To limit a live run during testing:
 
 ```bash
-cd "/Users/pramitdutta/Desktop/Trading Engines"
+cd /path/to/parent/of/commodities_quant_engine
 python commodities_quant_engine/run_local.py --watch --refresh-seconds 30 --max-iterations 3 --commodity GOLD
 ```
 
 To run with a real local file:
 
 ```bash
-cd "/Users/pramitdutta/Desktop/Trading Engines"
+cd /path/to/parent/of/commodities_quant_engine
 python commodities_quant_engine/run_local.py --commodity GOLD --price-file commodities_quant_engine/local_data/market/gold_ohlcv.csv
 ```
 
 To print the markdown suggestion as well:
 
 ```bash
-cd "/Users/pramitdutta/Desktop/Trading Engines"
+cd /path/to/parent/of/commodities_quant_engine
 python commodities_quant_engine/run_local.py --show-markdown
 ```
 
 To list configured commodities and their latest signal summaries:
 
 ```bash
-cd "/Users/pramitdutta/Desktop/Trading Engines"
+cd /path/to/parent/of/commodities_quant_engine
 python commodities_quant_engine/run_local.py --list-commodities
 ```
 
 To run all configured commodities in one go:
 
 ```bash
-cd "/Users/pramitdutta/Desktop/Trading Engines"
+cd /path/to/parent/of/commodities_quant_engine
 python commodities_quant_engine/run_local.py --all-commodities
 ```
 
 To run only selected commodities:
 
 ```bash
-cd "/Users/pramitdutta/Desktop/Trading Engines"
+cd /path/to/parent/of/commodities_quant_engine
 python commodities_quant_engine/run_local.py --commodities GOLD SILVER COPPER
 ```
 
 To use configured local/provider data for all commodities and skip missing ones cleanly:
 
 ```bash
-cd "/Users/pramitdutta/Desktop/Trading Engines"
+cd /path/to/parent/of/commodities_quant_engine
 python commodities_quant_engine/run_local.py --all-commodities --use-provider --start-date 2025-01-01 --end-date 2025-12-31
 ```
 
 To use the optional `commodities-api.com` provider for mapped commodities:
 
 ```bash
-cd "/Users/pramitdutta/Desktop/Trading Engines"
+cd /path/to/parent/of/commodities_quant_engine
 python commodities_quant_engine/run_local.py --commodities GOLD SILVER --provider COMMODITIES_API --start-date 2025-01-01 --end-date 2025-12-31
 ```
 
@@ -474,7 +474,7 @@ This keeps the system adaptive, but not self-modifying in an opaque way.
 
 ## Legacy Backtest Compatibility
 
-[`analytics/backtest`](/Users/pramitdutta/Desktop/Trading%20Engines/commodities_quant_engine/analytics/backtest/__init__.py) now acts as a compatibility layer over the newer workflow:
+[`analytics/backtest`](analytics/backtest/__init__.py) now acts as a compatibility layer over the newer workflow:
 
 - `MacroBacktester` uses real price inputs and evaluates signals through `analytics/evaluation`
 - `MacroParameterTuner` delegates candidate generation to the governed adaptive engine
@@ -483,7 +483,7 @@ There is now one intended research loop rather than a disconnected backtest path
 
 ## Configuration
 
-Primary settings live in [`config/settings.py`](/Users/pramitdutta/Desktop/Trading%20Engines/commodities_quant_engine/config/settings.py).
+Primary settings live in [`config/settings.py`](config/settings.py).
 
 Important sections:
 
