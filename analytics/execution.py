@@ -28,15 +28,22 @@ def resolve_price(row: pd.Series, field: str) -> float:
     raise ValueError(f"Execution price field '{field}' is unavailable for this bar.")
 
 
-def slippage_rate(row: pd.Series, phase: ExecutionPhase, median_volume: float | None = None) -> float:
+def slippage_rate(
+    row: pd.Series,
+    phase: ExecutionPhase,
+    median_volume: float | None = None,
+    participation: float = 0.0,
+) -> float:
     config = settings.execution
     base_bps = config.entry_slippage_bps if phase == "entry" else config.exit_slippage_bps
+    spread_bps = config.entry_spread_bps if phase == "entry" else config.exit_spread_bps
     reference_field = config.entry_price_field if phase == "entry" else config.exit_price_field
     reference_price = max(resolve_price(row, reference_field), 1e-12)
     high = float(row.get("high", reference_price))
     low = float(row.get("low", reference_price))
     intraday_range = max(0.0, high - low) / reference_price
-    base_rate = base_bps / 10000.0
+    impact_bps = max(0.0, float(participation)) * float(config.impact_coefficient_bps)
+    base_rate = (base_bps + 0.5 * spread_bps + impact_bps) / 10000.0
     capped_range_component = min(intraday_range * config.max_slippage_from_range_fraction, intraday_range)
     liquidity_multiplier = 1.0
     if median_volume is not None and median_volume > 0:
@@ -51,6 +58,7 @@ def execution_price(
     direction: str,
     phase: ExecutionPhase,
     median_volume: float | None = None,
+    participation: float = 0.0,
 ) -> float:
     if direction == "neutral":
         reference_field = settings.execution.entry_price_field if phase == "entry" else settings.execution.exit_price_field
@@ -58,7 +66,7 @@ def execution_price(
 
     reference_field = settings.execution.entry_price_field if phase == "entry" else settings.execution.exit_price_field
     reference_price = resolve_price(row, reference_field)
-    rate = slippage_rate(row, phase=phase, median_volume=median_volume)
+    rate = slippage_rate(row, phase=phase, median_volume=median_volume, participation=participation)
 
     is_buy = (phase == "entry" and direction == "long") or (phase == "exit" and direction == "short")
     if is_buy:

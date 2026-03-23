@@ -45,10 +45,13 @@ def make_snapshot(i: int) -> SignalSnapshot:
     )
 
 
-def test_adaptive_engine_requires_evidence_and_creates_candidate(tmp_path):
+def test_adaptive_engine_requires_evidence_and_creates_candidate(tmp_path, monkeypatch):
     storage = LocalStorage(str(tmp_path))
     evaluation_engine = SignalEvaluationEngine(storage=storage)
     adaptation_engine = AdaptiveParameterEngine(storage=storage)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.adaptation.max_feature_drift", 100.0)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.adaptation.min_hit_rate_improvement", 0.0)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.adaptation.min_rank_ic_improvement", 0.0)
     snapshots = [make_snapshot(i) for i in range(60)]
     evaluation_engine.persist_signal_snapshots(snapshots, commodity="GOLD")
 

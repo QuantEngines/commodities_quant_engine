@@ -107,6 +107,8 @@ class CompositeDecisionEngine:
         supporting, contradictory = self._extract_drivers(macro_regime.combined_label, inefficiency.deviation_z, directional_scores, macro_confidence, risk_penalty)
         risks = self._identify_risks(inefficiency.instability_warning, risk_penalty, macro_confidence)
         explanation = self._generate_explanation(macro_regime.combined_label, directional_scores, inefficiency.deviation_z, risk_penalty, macro_confidence, composite_score)
+        calibrated_regime_probability = self._calibrated_regime_probability(macro_regime.combined_label, macro_regime.probability)
+        final_confidence = self._compute_final_confidence(composite_score, macro_confidence, quality_report.flag)
 
         active_contract = contract_master.get_active_contract(commodity, as_of_timestamp.date())
         signal_id = self._build_signal_id(commodity, as_of_timestamp)
@@ -116,7 +118,7 @@ class CompositeDecisionEngine:
             exchange=active_contract.exchange if active_contract else settings.commodities[commodity].exchange,
             active_contract=active_contract.symbol if active_contract else commodity,
             regime_label=macro_regime.combined_label,
-            regime_probabilities={macro_regime.combined_label: macro_regime.probability},
+            regime_probabilities={macro_regime.combined_label: calibrated_regime_probability},
             directional_scores=directional_scores,
             inefficiency_score=inefficiency.deviation_z,
             risk_penalty=risk_penalty.total_penalty,
@@ -130,7 +132,7 @@ class CompositeDecisionEngine:
             principal_risks=risks,
             explanation_summary=explanation,
             data_quality_flag=quality_report.flag,
-            confidence_score=self._compute_final_confidence(composite_score, macro_confidence, quality_report.flag),
+            confidence_score=final_confidence,
             signal_id=signal_id,
             model_version=str(self.parameter_state.get("version_id", "default")),
             config_version=settings.config_version,
@@ -141,6 +143,9 @@ class CompositeDecisionEngine:
                 "directional_confidences": directional_confidences,
                 "contract_source": active_contract.source if active_contract else "settings_default",
                 "contract_is_fallback": active_contract.is_fallback if active_contract else True,
+                "raw_regime_probability": float(macro_regime.probability),
+                "calibrated_regime_probability": float(calibrated_regime_probability),
+                "confidence_calibrated": bool(self.parameter_state.get("confidence_calibration")),
             },
             macro_regime_summary=macro_regime.combined_label,
             macro_feature_highlights=self._extract_macro_highlights(macro_features, as_of_timestamp),
@@ -163,7 +168,7 @@ class CompositeDecisionEngine:
             direction=direction,
             conviction=suggestion.confidence_score,
             regime_label=macro_regime.combined_label,
-            regime_probability=macro_regime.probability,
+            regime_probability=calibrated_regime_probability,
             inefficiency_score=inefficiency.deviation_z,
             composite_score=composite_score,
             suggested_horizon=horizon,
@@ -375,7 +380,41 @@ class CompositeDecisionEngine:
         raw = 1.0 / (1.0 + np.exp(-(abs(composite_score) + macro_confidence.final_confidence_adjustment) * 1.5))
         if data_quality_flag == "stale":
             raw *= 0.8
-        return float(max(0.0, min(1.0, raw)))
+        bounded = float(max(0.0, min(1.0, raw)))
+        return self._apply_confidence_calibration(bounded)
+
+    def _apply_confidence_calibration(self, raw_confidence: float) -> float:
+        calibration = self.parameter_state.get("confidence_calibration", {})
+        anchors = calibration.get("anchors", []) if isinstance(calibration, dict) else []
+        if not anchors:
+            return float(raw_confidence)
+
+        points = sorted(
+            (
+                float(anchor.get("confidence", 0.0)),
+                float(anchor.get("calibrated_hit_rate", 0.0)),
+            )
+            for anchor in anchors
+            if isinstance(anchor, dict)
+        )
+        if not points:
+            return float(raw_confidence)
+        x = np.array([point[0] for point in points], dtype=float)
+        y = np.array([point[1] for point in points], dtype=float)
+        calibrated = float(np.interp(raw_confidence, x, y))
+        return float(np.clip(calibrated, 0.0, 1.0))
+
+    def _calibrated_regime_probability(self, regime_label: str, base_probability: float) -> float:
+        calibration = self.parameter_state.get("regime_calibration", {})
+        if not isinstance(calibration, dict):
+            return float(base_probability)
+        regime_map = calibration.get("regime_map", {})
+        if not isinstance(regime_map, dict):
+            return float(base_probability)
+        calibrated = regime_map.get(regime_label)
+        if calibrated is None:
+            return float(base_probability)
+        return float(np.clip(float(calibrated), 0.0, 1.0))
 
     def _weighted_directional_score(self, directional_scores: Dict[int, float]) -> float:
         if not directional_scores:

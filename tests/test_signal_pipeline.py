@@ -42,3 +42,37 @@ def test_research_workflow_persists_signal_and_evaluation(tmp_path):
 
     artifact = workflow.run_evaluation_cycle("GOLD", price_data, as_of_timestamp=price_data.index[-1].to_pydatetime())
     assert artifact.summary_metrics["sample_size"] >= 1
+
+
+def test_research_workflow_applies_persisted_calibration_maps(tmp_path):
+    storage = LocalStorage(str(tmp_path))
+    workflow = ResearchWorkflow(storage=storage)
+    price_data = make_price_frame()
+    storage.write_json(
+        "evaluations",
+        "GOLD_calibration",
+        {
+            "confidence_calibration": {
+                "anchors": [
+                    {"confidence": 0.0, "calibrated_hit_rate": 0.2},
+                    {"confidence": 1.0, "calibrated_hit_rate": 0.2},
+                ]
+            },
+            "regime_calibration": {
+                "regime_map": {
+                    "trend_following_bullish": 0.33,
+                    "trend_following_bearish": 0.44,
+                    "mean_reverting_rangebound": 0.55,
+                    "volatile_reversal": 0.66,
+                    "neutral": 0.5,
+                }
+            },
+        },
+    )
+
+    package = workflow.run_signal_cycle("GOLD", price_data.iloc[:-10])
+    calibrated_prob = package.suggestion.regime_probabilities[package.suggestion.regime_label]
+
+    assert abs(package.suggestion.confidence_score - 0.2) < 1e-9
+    assert 0.0 <= calibrated_prob <= 1.0
+    assert package.suggestion.diagnostics.get("confidence_calibrated") is True

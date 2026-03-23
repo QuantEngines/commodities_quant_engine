@@ -7,6 +7,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from sklearn.isotonic import IsotonicRegression
 
 from ...analytics.execution import direction_to_sign, execution_price, slippage_rate
 from ...config.settings import settings
@@ -37,6 +38,12 @@ class SignalEvaluationEngine:
         detailed_records = self._build_evaluation_records(price_data, snapshots, horizons, macro_events, as_of_timestamp)
         detailed_df = pd.DataFrame([self._serialize_evaluation_record(record) for record in detailed_records])
         summary_metrics, scorecards, degradation_alerts = self._summarize_evaluations(detailed_df)
+        calibration_payload = self._build_calibration_payload(commodity, detailed_df, as_of_timestamp)
+        if calibration_payload.get("drift_dashboard", {}).get("alerts"):
+            degradation_alerts = list(dict.fromkeys([*degradation_alerts, *calibration_payload["drift_dashboard"]["alerts"]]))
+        scorecards["confidence_calibration"] = calibration_payload.get("confidence_calibration", {})
+        scorecards["regime_calibration"] = calibration_payload.get("regime_calibration", {})
+        scorecards["drift_dashboard"] = calibration_payload.get("drift_dashboard", {})
 
         artifact = EvaluationArtifact(
             commodity=commodity,
@@ -57,8 +64,14 @@ class SignalEvaluationEngine:
             summary_payload = asdict(artifact)
             summary_payload["detailed_path"] = str(detailed_path)
             summary_path = self.storage.write_json(settings.storage.evaluation_store, f"{commodity}_summary", summary_payload)
+            calibration_path = self.storage.write_json(settings.storage.evaluation_store, f"{commodity}_calibration", calibration_payload)
+            drift_report_path = self._write_drift_dashboard_markdown(commodity, calibration_payload)
+            plot_paths = self._write_calibration_plots(commodity, calibration_payload)
             artifact.detailed_path = str(detailed_path)
             artifact.summary_path = str(summary_path)
+            artifact.scorecards["calibration_path"] = str(calibration_path)
+            artifact.scorecards["drift_dashboard_path"] = str(drift_report_path)
+            artifact.scorecards.update(plot_paths)
 
         return artifact
 
@@ -371,6 +384,230 @@ class SignalEvaluationEngine:
         if trailing["signed_return"].mean() < 0 and ordered["signed_return"].mean() > 0:
             alerts.append("Recent realized signed returns turned negative after a positive longer-run average.")
         return alerts
+
+    def _build_calibration_payload(self, commodity: str, detailed_df: pd.DataFrame, as_of_timestamp: datetime) -> Dict[str, object]:
+        confidence_calibration = self._confidence_calibration(detailed_df)
+        regime_calibration = self._regime_probability_calibration(detailed_df)
+        drift_dashboard = self._drift_dashboard(commodity, detailed_df, confidence_calibration)
+        return {
+            "commodity": commodity,
+            "created_at": as_of_timestamp.isoformat(),
+            "confidence_calibration": confidence_calibration,
+            "regime_calibration": regime_calibration,
+            "drift_dashboard": drift_dashboard,
+        }
+
+    def _confidence_calibration(self, detailed_df: pd.DataFrame) -> Dict[str, object]:
+        if detailed_df.empty:
+            return {"sample_size": 0, "anchors": [], "expected_calibration_error": None}
+
+        frame = detailed_df.copy()
+        frame["confidence"] = frame["confidence"].astype(float).clip(0.0, 1.0)
+        frame["direction_correct"] = frame["direction_correct"].astype(float)
+        if frame["confidence"].nunique() <= 1:
+            anchor_x = np.linspace(0.0, 1.0, 11)
+            anchor_y = np.repeat(frame["direction_correct"].mean(), len(anchor_x))
+        else:
+            model = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
+            model.fit(frame["confidence"].to_numpy(), frame["direction_correct"].to_numpy())
+            anchor_x = np.linspace(0.0, 1.0, 11)
+            anchor_y = model.predict(anchor_x)
+
+        bins = pd.cut(frame["confidence"], bins=np.linspace(0.0, 1.0, settings.evaluation.confidence_buckets + 1), include_lowest=True)
+        grouped = (
+            frame.groupby(bins, observed=False)
+            .agg(sample_size=("direction_correct", "count"), avg_confidence=("confidence", "mean"), empirical_hit_rate=("direction_correct", "mean"))
+            .reset_index(drop=True)
+        )
+        grouped = grouped[grouped["sample_size"] > 0]
+        if grouped.empty:
+            ece = None
+        else:
+            ece = float((grouped["sample_size"] * (grouped["avg_confidence"] - grouped["empirical_hit_rate"]).abs()).sum() / grouped["sample_size"].sum())
+
+        return {
+            "sample_size": int(len(frame)),
+            "expected_calibration_error": ece,
+            "anchors": [
+                {"confidence": float(x), "calibrated_hit_rate": float(y)}
+                for x, y in zip(anchor_x, anchor_y)
+            ],
+            "bucket_reliability": grouped.to_dict(orient="records"),
+        }
+
+    def _regime_probability_calibration(self, detailed_df: pd.DataFrame) -> Dict[str, object]:
+        if detailed_df.empty:
+            return {"sample_size": 0, "global_alignment_rate": None, "regime_map": {}}
+
+        frame = detailed_df.copy()
+        frame["regime_alignment"] = frame["regime_alignment"].astype(float)
+        global_rate = float(frame["regime_alignment"].mean()) if len(frame) else 0.5
+        prior_strength = 10.0
+        rows = []
+        regime_map: Dict[str, float] = {}
+        for regime_label, group in frame.groupby("regime_label"):
+            sample = int(len(group))
+            empirical = float(group["regime_alignment"].mean())
+            calibrated = float((sample * empirical + prior_strength * global_rate) / (sample + prior_strength))
+            regime_map[str(regime_label)] = calibrated
+            rows.append(
+                {
+                    "regime_label": str(regime_label),
+                    "sample_size": sample,
+                    "empirical_alignment_rate": empirical,
+                    "calibrated_probability": calibrated,
+                }
+            )
+        return {
+            "sample_size": int(len(frame)),
+            "global_alignment_rate": global_rate,
+            "prior_strength": prior_strength,
+            "regime_map": regime_map,
+            "by_regime": rows,
+        }
+
+    def _drift_dashboard(self, commodity: str, detailed_df: pd.DataFrame, confidence_calibration: Dict[str, object]) -> Dict[str, object]:
+        if detailed_df.empty:
+            return {"status": "no_data", "alerts": ["No evaluable records available for drift monitoring."]}
+
+        frame = detailed_df.copy().sort_values("timestamp")
+        frame["direction_correct"] = frame["direction_correct"].astype(float)
+        frame["regime_alignment"] = frame["regime_alignment"].astype(float)
+        frame["confidence"] = frame["confidence"].astype(float)
+        window = max(10, int(settings.evaluation.degradation_window_signals))
+        trailing = frame.tail(window)
+
+        full_hit = float(frame["direction_correct"].mean())
+        trailing_hit = float(trailing["direction_correct"].mean())
+        full_ret = float(frame["signed_return"].mean())
+        trailing_ret = float(trailing["signed_return"].mean())
+        full_regime = float(frame["regime_alignment"].mean())
+        trailing_regime = float(trailing["regime_alignment"].mean())
+        full_brier = float(((frame["confidence"] - frame["direction_correct"]) ** 2).mean())
+        trailing_brier = float(((trailing["confidence"] - trailing["direction_correct"]) ** 2).mean())
+        thresholds = self._drift_thresholds_for_commodity(commodity)
+
+        alerts = []
+        if trailing_hit + float(thresholds["hit_rate_drop"]) < full_hit:
+            alerts.append("Drift: trailing directional hit rate is materially below long-run average.")
+        if trailing_ret < 0.0 <= full_ret:
+            alerts.append("Drift: trailing signed returns turned negative while long-run mean is non-negative.")
+        if trailing_regime + float(thresholds["regime_alignment_drop"]) < full_regime:
+            alerts.append("Drift: regime alignment is deteriorating versus historical baseline.")
+        if trailing_brier > full_brier + float(thresholds["brier_increase"]):
+            alerts.append("Drift: confidence calibration error increased (higher trailing Brier score).")
+
+        return {
+            "status": "alert" if alerts else "stable",
+            "window_signals": int(len(trailing)),
+            "long_run": {
+                "hit_rate": full_hit,
+                "average_signed_return": full_ret,
+                "regime_alignment_rate": full_regime,
+                "brier_score": full_brier,
+                "expected_calibration_error": confidence_calibration.get("expected_calibration_error"),
+            },
+            "trailing": {
+                "hit_rate": trailing_hit,
+                "average_signed_return": trailing_ret,
+                "regime_alignment_rate": trailing_regime,
+                "brier_score": trailing_brier,
+            },
+            "thresholds": thresholds,
+            "alerts": alerts,
+        }
+
+    def _drift_thresholds_for_commodity(self, commodity: str) -> Dict[str, float]:
+        configured = settings.evaluation.drift_thresholds_by_family
+        fallback = dict(configured.get("default", {"hit_rate_drop": 0.10, "regime_alignment_drop": 0.10, "brier_increase": 0.03}))
+        commodity_config = settings.commodities.get(commodity)
+        family = commodity_config.segment if commodity_config else "default"
+        family_thresholds = configured.get(str(family), {})
+        merged = {**fallback, **family_thresholds}
+        return {
+            "family": str(family),
+            "hit_rate_drop": float(merged["hit_rate_drop"]),
+            "regime_alignment_drop": float(merged["regime_alignment_drop"]),
+            "brier_increase": float(merged["brier_increase"]),
+        }
+
+    def _write_drift_dashboard_markdown(self, commodity: str, calibration_payload: Dict[str, object]):
+        drift = calibration_payload.get("drift_dashboard", {})
+        confidence = calibration_payload.get("confidence_calibration", {})
+        regime = calibration_payload.get("regime_calibration", {})
+        thresholds = drift.get("thresholds", {})
+        lines = [
+            f"# Drift Dashboard: {commodity}",
+            "",
+            f"- Status: {drift.get('status', 'unknown')}",
+            f"- Window signals: {drift.get('window_signals', 0)}",
+            f"- ECE: {confidence.get('expected_calibration_error')}",
+            f"- Regime global alignment: {regime.get('global_alignment_rate')}",
+            f"- Family: {thresholds.get('family', 'default')}",
+            f"- Hit-rate threshold: {thresholds.get('hit_rate_drop')}",
+            f"- Regime-alignment threshold: {thresholds.get('regime_alignment_drop')}",
+            f"- Brier threshold: {thresholds.get('brier_increase')}",
+            "",
+            "## Alerts",
+        ]
+        alerts = drift.get("alerts", []) or ["No active drift alerts."]
+        lines.extend([f"- {alert}" for alert in alerts])
+        path = self.storage.resolve(settings.storage.report_store, f"{commodity}_drift_dashboard.md")
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return path
+
+    def _write_calibration_plots(self, commodity: str, calibration_payload: Dict[str, object]) -> Dict[str, str]:
+        try:
+            import matplotlib.pyplot as plt
+        except Exception:
+            return {}
+
+        confidence = calibration_payload.get("confidence_calibration", {})
+        regime = calibration_payload.get("regime_calibration", {})
+        outputs: Dict[str, str] = {}
+
+        anchors = confidence.get("anchors", [])
+        if anchors:
+            x = [float(anchor.get("confidence", 0.0)) for anchor in anchors]
+            y = [float(anchor.get("calibrated_hit_rate", 0.0)) for anchor in anchors]
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot([0.0, 1.0], [0.0, 1.0], linestyle="--", linewidth=1.0, label="ideal")
+            ax.plot(x, y, marker="o", linewidth=1.5, label="calibrated")
+            ax.set_title(f"{commodity} Confidence Calibration")
+            ax.set_xlabel("Raw confidence")
+            ax.set_ylabel("Calibrated hit rate")
+            ax.set_xlim(0.0, 1.0)
+            ax.set_ylim(0.0, 1.0)
+            ax.legend(loc="best")
+            fig.tight_layout()
+            confidence_path = self.storage.resolve(settings.storage.report_store, f"{commodity}_confidence_calibration.png")
+            fig.savefig(confidence_path, dpi=140)
+            plt.close(fig)
+            outputs["confidence_calibration_plot_path"] = str(confidence_path)
+
+        rows = regime.get("by_regime", [])
+        if rows:
+            labels = [str(row.get("regime_label", "unknown")) for row in rows]
+            empirical = [float(row.get("empirical_alignment_rate", 0.0)) for row in rows]
+            calibrated = [float(row.get("calibrated_probability", 0.0)) for row in rows]
+            idx = np.arange(len(labels))
+            width = 0.38
+            fig, ax = plt.subplots(figsize=(max(7, len(labels) * 1.2), 4.5))
+            ax.bar(idx - width / 2, empirical, width=width, label="empirical")
+            ax.bar(idx + width / 2, calibrated, width=width, label="calibrated")
+            ax.set_title(f"{commodity} Regime Calibration")
+            ax.set_ylabel("Alignment probability")
+            ax.set_ylim(0.0, 1.0)
+            ax.set_xticks(idx)
+            ax.set_xticklabels(labels, rotation=25, ha="right")
+            ax.legend(loc="best")
+            fig.tight_layout()
+            regime_path = self.storage.resolve(settings.storage.report_store, f"{commodity}_regime_calibration.png")
+            fig.savefig(regime_path, dpi=140)
+            plt.close(fig)
+            outputs["regime_calibration_plot_path"] = str(regime_path)
+
+        return outputs
 
     def _serialize_snapshot(self, snapshot: SignalSnapshot) -> Dict[str, object]:
         payload = snapshot.to_dict()

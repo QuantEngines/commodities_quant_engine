@@ -168,12 +168,44 @@ class EvaluationSettings(BaseModel):
     primary_horizon: int = 5
     event_window_days: int = 3
     entry_lag_bars: int = 1
+    drift_thresholds_by_family: Dict[str, Dict[str, float]] = Field(
+        default_factory=lambda: {
+            "default": {
+                "hit_rate_drop": 0.10,
+                "regime_alignment_drop": 0.10,
+                "brier_increase": 0.03,
+            },
+            "bullion": {
+                "hit_rate_drop": 0.08,
+                "regime_alignment_drop": 0.08,
+                "brier_increase": 0.025,
+            },
+            "base_metals": {
+                "hit_rate_drop": 0.10,
+                "regime_alignment_drop": 0.10,
+                "brier_increase": 0.03,
+            },
+            "energy": {
+                "hit_rate_drop": 0.12,
+                "regime_alignment_drop": 0.12,
+                "brier_increase": 0.04,
+            },
+            "agri": {
+                "hit_rate_drop": 0.15,
+                "regime_alignment_drop": 0.15,
+                "brier_increase": 0.05,
+            },
+        }
+    )
 
 
 class AdaptationSettings(BaseModel):
     enabled: bool = True
     rolling_window_signals: int = 250
     holdout_fraction: float = 0.25
+    walk_forward_folds: int = 4
+    purge_overlap_bars: int = 0
+    embargo_bars: int = 0
     min_sample_size: int = 40
     min_hit_rate_improvement: float = 0.03
     min_rank_ic_improvement: float = 0.02
@@ -198,9 +230,18 @@ class ExecutionSettings(BaseModel):
     exit_price_field: str = "close"
     entry_slippage_bps: float = 3.0
     exit_slippage_bps: float = 3.0
+    entry_spread_bps: float = 4.0
+    exit_spread_bps: float = 4.0
+    impact_coefficient_bps: float = 1.5
+    turnover_cost_bps: float = 2.0
     max_slippage_from_range_fraction: float = 0.15
     low_volume_threshold_ratio: float = 0.35
     low_volume_slippage_multiplier: float = 1.5
+    target_annualized_vol: float = 0.15
+    max_abs_position: float = 1.0
+    min_trade_confidence: float = 0.10
+    vol_target_window_bars: int = 20
+    annualization_days: int = 252
 
 
 class StorageSettings(BaseModel):

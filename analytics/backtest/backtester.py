@@ -62,7 +62,7 @@ class MacroBacktester:
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.evaluation_engine = SignalEvaluationEngine(storage=self.storage)
         self.adaptation_engine = AdaptiveParameterEngine(storage=self.storage)
-        self.transaction_costs = 0.001
+        self.transaction_costs = float(settings.execution.turnover_cost_bps) / 10000.0
 
     def run_backtest(
         self,
@@ -208,6 +208,7 @@ class MacroBacktester:
         closes = price_data["close"].astype(float)
         opens = price_data["open"].astype(float) if "open" in price_data.columns else closes
         rolling_median_volume = price_data["volume"].rolling(20, min_periods=5).median() if "volume" in price_data.columns else pd.Series(index=price_data.index, dtype=float)
+        rolling_vol = closes.pct_change().rolling(settings.execution.vol_target_window_bars, min_periods=5).std(ddof=0)
         signal_map = {pd.Timestamp(signal.timestamp): signal for signal in signals}
         current_position = 0.0
         pending_signal: Optional[Suggestion] = None
@@ -224,18 +225,32 @@ class MacroBacktester:
             if pending_signal is not None:
                 median_volume = float(rolling_median_volume.iloc[idx]) if len(rolling_median_volume) > idx and pd.notna(rolling_median_volume.iloc[idx]) else None
                 prior_position = current_position
+                realized_vol = float(rolling_vol.iloc[idx]) if idx < len(rolling_vol) and pd.notna(rolling_vol.iloc[idx]) else None
+                target_position = self._signal_to_position(pending_signal, realized_vol=realized_vol)
                 current_open = float(opens.iloc[idx])
                 if prior_position != 0.0:
                     prior_direction = "long" if prior_position > 0 else "short"
-                    exit_exec = execution_price(row, prior_direction, phase="exit", median_volume=median_volume)
+                    exit_exec = execution_price(
+                        row,
+                        prior_direction,
+                        phase="exit",
+                        median_volume=median_volume,
+                        participation=abs(prior_position),
+                    )
                     if prior_direction == "long":
                         exit_adjustment = exit_exec / current_open - 1.0
                     else:
                         exit_adjustment = current_open / exit_exec - 1.0
                     day_return += abs(prior_position) * exit_adjustment
-                current_position = self._signal_to_position(pending_signal)
+                current_position = target_position
                 if current_position != 0.0:
-                    entry_exec = execution_price(row, pending_signal.preferred_direction, phase="entry", median_volume=median_volume)
+                    entry_exec = execution_price(
+                        row,
+                        pending_signal.preferred_direction,
+                        phase="entry",
+                        median_volume=median_volume,
+                        participation=abs(current_position),
+                    )
                     close_price = float(closes.iloc[idx])
                     if pending_signal.preferred_direction == "long":
                         intraday_return = close_price / entry_exec - 1.0
@@ -256,12 +271,27 @@ class MacroBacktester:
             prev_close = float(closes.iloc[idx])
         return pd.Series(portfolio_returns, index=price_data.index)
 
-    def _signal_to_position(self, signal: Suggestion) -> float:
+    def _signal_to_position(self, signal: Suggestion, realized_vol: Optional[float] = None) -> float:
+        if signal.confidence_score < settings.execution.min_trade_confidence:
+            return 0.0
+
+        direction = 0.0
         if signal.preferred_direction == "long":
-            return signal.confidence_score
-        if signal.preferred_direction == "short":
-            return -signal.confidence_score
-        return 0.0
+            direction = 1.0
+        elif signal.preferred_direction == "short":
+            direction = -1.0
+        if direction == 0.0:
+            return 0.0
+
+        annualization = max(1, int(settings.execution.annualization_days))
+        target_daily_vol = float(settings.execution.target_annualized_vol) / np.sqrt(annualization)
+        vol_scalar = 1.0
+        if realized_vol is not None and realized_vol > 0:
+            vol_scalar = target_daily_vol / float(realized_vol)
+
+        raw_position = direction * float(signal.confidence_score) * vol_scalar
+        max_abs_position = float(settings.execution.max_abs_position)
+        return float(np.clip(raw_position, -max_abs_position, max_abs_position))
 
     def _calculate_performance_metrics(
         self,
@@ -273,8 +303,9 @@ class MacroBacktester:
     ) -> BacktestResult:
         cumulative = (1.0 + portfolio_returns).cumprod()
         total_return = float(cumulative.iloc[-1] - 1.0) if len(cumulative) else 0.0
-        annualized_return = float((1.0 + total_return) ** (252 / max(len(portfolio_returns), 1)) - 1.0) if len(portfolio_returns) else 0.0
-        volatility = float(portfolio_returns.std(ddof=0) * np.sqrt(252)) if len(portfolio_returns) else 0.0
+        annualization = max(1, int(settings.execution.annualization_days))
+        annualized_return = float((1.0 + total_return) ** (annualization / max(len(portfolio_returns), 1)) - 1.0) if len(portfolio_returns) else 0.0
+        volatility = float(portfolio_returns.std(ddof=0) * np.sqrt(annualization)) if len(portfolio_returns) else 0.0
         sharpe_ratio = annualized_return / volatility if volatility else 0.0
         running_max = cumulative.cummax() if len(cumulative) else cumulative
         drawdowns = (cumulative / running_max - 1.0) if len(cumulative) else cumulative

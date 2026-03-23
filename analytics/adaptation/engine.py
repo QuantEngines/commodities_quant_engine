@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -151,7 +151,8 @@ class AdaptiveParameterEngine:
         candidate_intercepts = deepcopy(incumbent.parameters.get("directional_intercepts", {}))
         horizon_results: Dict[str, Dict[str, float]] = {}
         improvement_flags: List[bool] = []
-        safety_checks = {"min_sample_size": True, "holdout_improvement": True, "feature_drift_ok": True}
+        drift_flags: List[bool] = []
+        safety_checks = {"min_sample_size": True, "holdout_improvement": False, "feature_drift_ok": True}
 
         for horizon, horizon_df in merged.groupby("horizon"):
             if len(horizon_df) < settings.adaptation.min_sample_size:
@@ -161,31 +162,58 @@ class AdaptiveParameterEngine:
             feature_names = settings.signal.directional_feature_names
             X = dataset[feature_names].fillna(0.0)
             y = self._winsorize_series(dataset["realized_return"].astype(float))
-            split_index = max(settings.adaptation.min_sample_size // 2, int(len(dataset) * (1 - settings.adaptation.holdout_fraction)))
-            train_X, holdout_X = X.iloc[:split_index], X.iloc[split_index:]
-            train_y, holdout_y = y.iloc[:split_index], y.iloc[split_index:]
-            if holdout_X.empty:
+            splits = self._purged_walkforward_splits(len(dataset), int(horizon))
+            if not splits:
                 continue
 
-            model = Ridge(alpha=settings.adaptation.ridge_alpha)
-            sample_weights = self._sample_weights(len(train_X))
-            model.fit(train_X, train_y, sample_weight=sample_weights)
-            candidate_pred = pd.Series(model.predict(holdout_X), index=holdout_X.index)
-            incumbent_pred = dataset["directional_scores"].map(lambda item: float(item.get(str(horizon), item.get(horizon, 0.0)) if isinstance(item, dict) else 0.0)).iloc[split_index:]
+            candidate_fold_preds: List[pd.Series] = []
+            incumbent_fold_preds: List[pd.Series] = []
+            holdout_targets: List[pd.Series] = []
+            for train_idx, holdout_idx in splits:
+                train_X = X.iloc[train_idx]
+                train_y = y.iloc[train_idx]
+                holdout_X = X.iloc[holdout_idx]
+                holdout_y = y.iloc[holdout_idx]
+                if holdout_X.empty or train_X.empty:
+                    continue
+
+                fold_model = Ridge(alpha=settings.adaptation.ridge_alpha)
+                sample_weights = self._sample_weights(len(train_X))
+                fold_model.fit(train_X, train_y, sample_weight=sample_weights)
+                candidate_fold_preds.append(pd.Series(fold_model.predict(holdout_X), index=holdout_X.index))
+                incumbent_fold_preds.append(
+                    dataset.iloc[holdout_idx]["directional_scores"].map(
+                        lambda item: float(item.get(str(horizon), item.get(horizon, 0.0)) if isinstance(item, dict) else 0.0)
+                    )
+                )
+                holdout_targets.append(holdout_y)
+
+            if not candidate_fold_preds:
+                continue
+
+            candidate_pred = pd.concat(candidate_fold_preds).sort_index()
+            incumbent_pred = pd.concat(incumbent_fold_preds).sort_index()
+            holdout_y = pd.concat(holdout_targets).sort_index()
 
             candidate_metrics = self._prediction_metrics(candidate_pred, holdout_y)
             incumbent_metrics = self._prediction_metrics(incumbent_pred, holdout_y)
+
+            final_model = Ridge(alpha=settings.adaptation.ridge_alpha)
+            final_weights = self._sample_weights(len(X))
+            final_model.fit(X, y, sample_weight=final_weights)
+
             improvement = (
                 candidate_metrics["hit_rate"] >= incumbent_metrics["hit_rate"] + settings.adaptation.min_hit_rate_improvement
                 and candidate_metrics["rank_ic"] >= incumbent_metrics["rank_ic"] + settings.adaptation.min_rank_ic_improvement
             )
-            drift_ok = self._feature_drift_ok(candidate_weights.get(str(horizon), {}), feature_names, model.coef_)
+            drift_ok = self._feature_drift_ok(candidate_weights.get(str(horizon), {}), feature_names, final_model.coef_)
             improvement_flags.append(improvement)
-            safety_checks["holdout_improvement"] = safety_checks["holdout_improvement"] and improvement
-            safety_checks["feature_drift_ok"] = safety_checks["feature_drift_ok"] and drift_ok
+            drift_flags.append(drift_ok)
 
             horizon_results[str(horizon)] = {
                 "sample_size": int(len(dataset)),
+                "fold_count": int(len(candidate_fold_preds)),
+                "holdout_records": int(len(holdout_y)),
                 "candidate_hit_rate": candidate_metrics["hit_rate"],
                 "incumbent_hit_rate": incumbent_metrics["hit_rate"],
                 "candidate_rank_ic": candidate_metrics["rank_ic"],
@@ -196,9 +224,12 @@ class AdaptiveParameterEngine:
             if improvement and drift_ok:
                 candidate_weights[str(horizon)] = {
                     feature_name: float(coef)
-                    for feature_name, coef in zip(feature_names, model.coef_)
+                    for feature_name, coef in zip(feature_names, final_model.coef_)
                 }
-                candidate_intercepts[str(horizon)] = float(model.intercept_)
+                candidate_intercepts[str(horizon)] = float(final_model.intercept_)
+
+        safety_checks["holdout_improvement"] = bool(improvement_flags) and any(improvement_flags)
+        safety_checks["feature_drift_ok"] = bool(drift_flags) and all(drift_flags)
 
         evidence = {
             "evaluated_horizons": horizon_results,
@@ -218,6 +249,48 @@ class AdaptiveParameterEngine:
             "directional_feature_weights": candidate_weights,
             "directional_intercepts": candidate_intercepts,
         }, evidence, safety_checks
+
+    def _purged_walkforward_splits(self, length: int, horizon: int) -> List[Tuple[np.ndarray, np.ndarray]]:
+        if length <= 0:
+            return []
+
+        min_sample = int(settings.adaptation.min_sample_size)
+        purge = max(int(settings.adaptation.purge_overlap_bars), int(horizon))
+        embargo = max(int(settings.adaptation.embargo_bars), int(horizon))
+        min_train = max(min_sample, purge + embargo + 1)
+
+        min_holdout = max(5, int(horizon))
+        desired_holdout = max(min_holdout, int(length * float(settings.adaptation.holdout_fraction)))
+        available_holdout = length - (min_train + purge + embargo)
+        holdout_size = min(desired_holdout, available_holdout)
+        if holdout_size < min_holdout:
+            return []
+
+        earliest_holdout_start = min_train + purge + embargo
+        latest_holdout_start = length - holdout_size
+        if earliest_holdout_start > latest_holdout_start:
+            return []
+
+        folds = max(1, int(settings.adaptation.walk_forward_folds))
+        if folds == 1:
+            holdout_starts = [latest_holdout_start]
+        else:
+            holdout_starts = sorted(
+                set(int(value) for value in np.linspace(earliest_holdout_start, latest_holdout_start, num=folds))
+            )
+
+        splits: List[Tuple[np.ndarray, np.ndarray]] = []
+        for holdout_start in holdout_starts:
+            train_end_exclusive = holdout_start - purge - embargo
+            if train_end_exclusive < min_train:
+                continue
+            holdout_end_exclusive = min(length, holdout_start + holdout_size)
+            if holdout_start >= holdout_end_exclusive:
+                continue
+            train_idx = np.arange(0, train_end_exclusive)
+            holdout_idx = np.arange(holdout_start, holdout_end_exclusive)
+            splits.append((train_idx, holdout_idx))
+        return splits
 
     def _expand_feature_vectors(self, dataset: pd.DataFrame) -> pd.DataFrame:
         rows = []

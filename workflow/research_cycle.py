@@ -33,7 +33,12 @@ class ResearchWorkflow:
         persist_report: bool = True,
     ) -> SignalPackage:
         active_version = self.adaptation_engine.load_active_version(commodity)
-        composite_engine = CompositeDecisionEngine(parameter_state={"version_id": active_version.version_id, **active_version.parameters})
+        calibration_payload = self.storage.read_json(settings.storage.evaluation_store, f"{commodity}_calibration")
+        parameter_state: Dict[str, object] = {"version_id": active_version.version_id, **active_version.parameters}
+        if calibration_payload:
+            parameter_state["confidence_calibration"] = calibration_payload.get("confidence_calibration", {})
+            parameter_state["regime_calibration"] = calibration_payload.get("regime_calibration", {})
+        composite_engine = CompositeDecisionEngine(parameter_state=parameter_state)
         package = composite_engine.generate_signal_package(
             data=price_data,
             commodity=commodity,

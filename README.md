@@ -16,6 +16,8 @@ The repository was refactored from a mostly scaffolded signal stack into a resea
 - a broader default MCX-aligned commodity universe instead of a four-symbol demo set
 - first-class signal evaluation across configurable horizons
 - degradation and calibration diagnostics
+- confidence reliability calibration and regime probability calibration artifacts
+- drift dashboard generation with trailing-vs-history diagnostics
 - adaptive parameter recommendations with holdout validation and versioning
 - explicit workflow orchestration for signal, evaluation, and adaptation cycles
 
@@ -41,9 +43,26 @@ The repository was refactored from a mostly scaffolded signal stack into a resea
 3. Generate regime, directional, inefficiency, and macro-adjusted composite signals.
 4. Persist a `SignalSnapshot` artifact.
 5. Evaluate historical snapshots against realized outcomes over 1D/3D/5D/10D/20D horizons.
-6. Produce scorecards, confidence calibration, and degradation alerts.
-7. Fit candidate parameter updates on historical evaluated signals using holdout validation.
-8. Save candidate and active parameter versions with evidence and safety checks.
+6. Produce scorecards, confidence calibration, regime calibration, and drift alerts.
+7. Persist calibration artifacts that are consumed by live signal generation.
+8. Fit candidate parameter updates on historical evaluated signals using purged walk-forward validation.
+9. Save candidate and active parameter versions with evidence and safety checks.
+
+### Calibration And Drift Artifacts
+
+Evaluation now writes commodity-level calibration artifacts to the evaluation store:
+
+- `<COMMODITY>_calibration.json`: confidence anchors, bucket reliability, regime probability map, drift dashboard metrics
+- `<COMMODITY>_drift_dashboard.md`: human-readable drift status and alert summary
+- `<COMMODITY>_confidence_calibration.png`: confidence reliability curve (ideal vs calibrated)
+- `<COMMODITY>_regime_calibration.png`: empirical vs calibrated regime alignment probabilities
+
+Drift thresholds are now commodity-family aware (e.g., bullion, base metals, energy, agri) and configured under `settings.evaluation.drift_thresholds_by_family`.
+
+`ResearchWorkflow.run_signal_cycle` automatically loads `<COMMODITY>_calibration.json` when available and applies:
+
+- confidence calibration to final suggestion confidence scores
+- regime probability calibration to regime probabilities stored in suggestions and snapshots
 
 ### Default MCX Commodity Universe
 
@@ -93,27 +112,27 @@ The repository uses a flat-root package layout. Import it from the parent direct
 python3 --version
 ```
 
-2. Create and activate a virtual environment:
+1. Create and activate a virtual environment:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-3. Install dependencies:
+1. Install dependencies:
 
 ```bash
 python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.txt
 ```
 
-4. Run tests:
+1. Run tests:
 
 ```bash
 pytest -q
 ```
 
-5. If importing from outside the repo root, export the parent directory to `PYTHONPATH`:
+1. If importing from outside the repo root, export the parent directory to `PYTHONPATH`:
 
 ```bash
 export PYTHONPATH="$(dirname "$PWD"):$PYTHONPATH"
@@ -127,7 +146,7 @@ export PYTHONPATH="$(dirname "$PWD"):$PYTHONPATH"
 py --version
 ```
 
-2. Create and activate a virtual environment:
+1. Create and activate a virtual environment:
 
 ```powershell
 py -m venv .venv
@@ -140,20 +159,20 @@ If PowerShell blocks activation, run:
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
-3. Install dependencies:
+1. Install dependencies:
 
 ```powershell
 py -m pip install --upgrade pip
 py -m pip install -r requirements.txt
 ```
 
-4. Run tests:
+1. Run tests:
 
 ```powershell
 py -m pytest -q
 ```
 
-5. If importing from outside the repo root, set `PYTHONPATH` to the parent directory:
+1. If importing from outside the repo root, set `PYTHONPATH` to the parent directory:
 
 ```powershell
 $env:PYTHONPATH = "$(Split-Path -Parent (Get-Location));$env:PYTHONPATH"

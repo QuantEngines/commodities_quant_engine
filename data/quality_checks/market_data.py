@@ -86,9 +86,24 @@ class MarketDataValidator:
                 issues.append(f"Latest market data is stale by {staleness_days:.0f} days.")
 
         flag = "good"
-        is_valid = not any("Missing required column" in issue or "must be a DatetimeIndex" in issue for issue in issues)
+        has_schema_or_index_issue = any(
+            "Missing required column" in issue
+            or "must be a DatetimeIndex" in issue
+            or "not sorted in ascending" in issue
+            or "duplicate timestamps" in issue
+            for issue in issues
+        )
+        has_value_integrity_issue = any(
+            "missing values" in issue.lower()
+            or "violate basic price bounds" in issue.lower()
+            or "non-positive prices" in issue.lower()
+            or "negative values" in issue.lower()
+            for issue in issues
+        )
+        has_history_issue = any("need at least" in issue for issue in issues)
+        is_valid = not (has_schema_or_index_issue or has_value_integrity_issue or has_history_issue)
 
-        if not is_valid or any("need at least" in issue for issue in issues):
+        if not is_valid:
             flag = "incomplete"
         elif any("stale" in issue.lower() for issue in issues):
             flag = "stale"
