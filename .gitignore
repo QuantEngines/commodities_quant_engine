@@ -5,11 +5,18 @@
 __pycache__/
 *.py[cod]
 
+# Generated research/audit outputs
 artifacts/
 results/
+reports/
 cache/
 data/cache/
 raw/
+*.jsonl
+*.jsonl.gz
+*.parquet
+*.feather
+*.log
 
 .coverage
 htmlcov/
