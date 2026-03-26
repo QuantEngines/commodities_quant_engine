@@ -161,6 +161,16 @@ class CompositeSettings(BaseModel):
     strong_threshold: float = 1.20
 
 
+class NLPEventSettings(BaseModel):
+    enabled: bool = False
+    use_llm_extraction: bool = False
+    max_items_per_cycle: int = 100
+    directional_overlay_weight: float = 0.20
+    regime_overlay_weight: float = 0.20
+    confidence_uncertainty_weight: float = 0.25
+    risk_penalty_weight: float = 0.30
+
+
 class EvaluationSettings(BaseModel):
     horizons: List[int] = Field(default_factory=lambda: [1, 3, 5, 10, 20])
     confidence_buckets: int = 5
@@ -258,6 +268,7 @@ class Settings(BaseSettings):
     macro: MacroSettings = Field(default_factory=MacroSettings)
     signal: SignalSettings = Field(default_factory=SignalSettings)
     composite: CompositeSettings = Field(default_factory=CompositeSettings)
+    nlp_event: NLPEventSettings = Field(default_factory=NLPEventSettings)
     evaluation: EvaluationSettings = Field(default_factory=EvaluationSettings)
     adaptation: AdaptationSettings = Field(default_factory=AdaptationSettings)
     contract_master: ContractMasterSettings = Field(default_factory=ContractMasterSettings)

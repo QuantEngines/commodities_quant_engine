@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Mapping, Optional, Union
 
 import pandas as pd
 
@@ -11,6 +11,7 @@ from ..analytics.evaluation import SignalEvaluationEngine
 from ..config.settings import settings
 from ..data.models import AdaptationDecision, EvaluationArtifact, MacroEvent, MacroFeature, SignalPackage
 from ..data.storage.local import LocalStorage
+from ..nlp.macro_event_engine.cluster_report import ClusterReportGenerator
 from ..signals.composite.composite_decision import CompositeDecisionEngine
 
 
@@ -28,6 +29,8 @@ class ResearchWorkflow:
         price_data: pd.DataFrame,
         macro_features: Optional[List[MacroFeature]] = None,
         macro_events: Optional[List[MacroEvent]] = None,
+        raw_text_items: Optional[List[Union[str, Mapping[str, object]]]] = None,
+        llm_json_by_source_id: Optional[Dict[str, str]] = None,
         as_of_timestamp: Optional[datetime] = None,
         persist_snapshot: bool = True,
         persist_report: bool = True,
@@ -44,11 +47,15 @@ class ResearchWorkflow:
             commodity=commodity,
             macro_features=macro_features,
             macro_events=macro_events,
+            raw_text_items=raw_text_items,
+            llm_json_by_source_id=llm_json_by_source_id,
             as_of_timestamp=as_of_timestamp,
         )
         if persist_snapshot:
             self.evaluation_engine.persist_signal_snapshots([package.snapshot], commodity=commodity)
+            self._persist_structured_events(package=package, commodity=commodity)
         if persist_report:
+            self._generate_cluster_report(package=package, commodity=commodity)
             report_payload = {
                 "signal_id": package.snapshot.signal_id,
                 "timestamp": package.snapshot.timestamp,
@@ -58,6 +65,55 @@ class ResearchWorkflow:
             }
             self.storage.write_json(settings.storage.report_store, f"{commodity}_{package.snapshot.signal_id}", report_payload)
         return package
+
+    def _generate_cluster_report(self, package: SignalPackage, commodity: str) -> None:
+        cluster_manifest = package.suggestion.diagnostics.get("event_cluster_manifest", [])
+        if not isinstance(cluster_manifest, list) or not cluster_manifest:
+            return
+        diagnostics = package.suggestion.diagnostics.get("event_intelligence_diagnostics", {})
+        ClusterReportGenerator().generate(
+            cluster_manifest=cluster_manifest,
+            diagnostics=diagnostics,
+            commodity=commodity,
+            signal_id=package.snapshot.signal_id,
+            as_of_timestamp=package.snapshot.timestamp,
+            storage=self.storage,
+        )
+
+    def _persist_structured_events(self, package: SignalPackage, commodity: str) -> None:
+        event_rows = package.suggestion.diagnostics.get("event_intelligence_events", [])
+        if not isinstance(event_rows, list) or not event_rows:
+            return
+
+        normalized_rows: List[Dict[str, object]] = []
+        for idx, row in enumerate(event_rows):
+            if not isinstance(row, dict):
+                continue
+            normalized_rows.append(
+                {
+                    "signal_id": package.snapshot.signal_id,
+                    "commodity": commodity,
+                    "snapshot_timestamp": package.snapshot.timestamp.isoformat(),
+                    "event_row_id": f"{package.snapshot.signal_id}_{idx}",
+                    **row,
+                }
+            )
+        if not normalized_rows:
+            return
+
+        self.storage.append_jsonl(
+            settings.storage.signal_store,
+            f"{commodity}_structured_events",
+            normalized_rows,
+            compress=True,
+        )
+        event_df = pd.DataFrame(normalized_rows)
+        self.storage.append_dataframe(
+            event_df,
+            settings.storage.signal_store,
+            f"{commodity}_structured_events",
+            dedupe_on=["event_row_id"],
+        )
 
     def run_evaluation_cycle(
         self,

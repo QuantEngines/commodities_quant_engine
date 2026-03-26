@@ -2,6 +2,7 @@ from datetime import datetime
 
 import pandas as pd
 
+from ..config.settings import settings
 from ..data.storage.local import LocalStorage
 from ..signals.composite.composite_decision import CompositeDecisionEngine
 from ..workflow import ResearchWorkflow
@@ -76,3 +77,24 @@ def test_research_workflow_applies_persisted_calibration_maps(tmp_path):
     assert abs(package.suggestion.confidence_score - 0.2) < 1e-9
     assert 0.0 <= calibrated_prob <= 1.0
     assert package.suggestion.diagnostics.get("confidence_calibrated") is True
+
+
+def test_research_workflow_persists_structured_events_with_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings.nlp_event, "enabled", True)
+    storage = LocalStorage(str(tmp_path))
+    workflow = ResearchWorkflow(storage=storage)
+    price_data = make_price_frame()
+
+    package = workflow.run_signal_cycle(
+        "CRUDEOIL",
+        price_data.iloc[:-5],
+        raw_text_items=[
+            "Pipeline outage and sanctions risk near Hormuz disrupt exports",
+            "Inventory drawdown deepens crude tightness",
+        ],
+    )
+
+    assert package.snapshot.signal_id
+    persisted = storage.load_jsonl("signals", "CRUDEOIL_structured_events")
+    assert persisted
+    assert all(item.get("signal_id") == package.snapshot.signal_id for item in persisted)

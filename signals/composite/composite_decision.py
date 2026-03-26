@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
 from ...config.settings import settings
+from ...core.composite import event_risk_penalty
+from ...core.directional import event_directional_adjustment
+from ...core.regimes import event_regime_adjustment
 from ...data.contract_master.manager import contract_master
 from ...data.models import (
     DirectionalSignal,
@@ -26,6 +29,8 @@ from ...signals.inefficiency.inefficiency_engine import InefficiencyEngine
 from ...signals.macro.confidence_overlay import MacroConfidenceOverlay as MacroConfidenceOverlayEngine
 from ...signals.macro.directional_overlay import MacroDirectionalOverlay
 from ...signals.macro.regime_overlay import MacroRegimeOverlay
+from ...nlp import EventIntelligenceEngine
+from ...nlp.macro_event_engine.calibration import calibrate_overlay_weights_for_commodity
 
 
 class CompositeDecisionEngine:
@@ -40,6 +45,7 @@ class CompositeDecisionEngine:
         self.macro_regime_overlay = MacroRegimeOverlay(self.regime_engine)
         self.macro_directional_overlay = MacroDirectionalOverlay(self.directional_engine)
         self.macro_confidence_overlay = MacroConfidenceOverlayEngine()
+        self.event_intelligence_engine = EventIntelligenceEngine()
 
     def generate_suggestion(
         self,
@@ -63,11 +69,22 @@ class CompositeDecisionEngine:
         commodity: str,
         macro_features: Optional[List[MacroFeature]] = None,
         macro_events: Optional[List[MacroEvent]] = None,
+        raw_text_items: Optional[List[Union[str, Mapping[str, object]]]] = None,
+        llm_json_by_source_id: Optional[Dict[str, str]] = None,
         as_of_timestamp: Optional[datetime] = None,
     ) -> SignalPackage:
         macro_features = macro_features or []
         macro_events = macro_events or []
+        raw_text_items = raw_text_items or []
         as_of_timestamp = as_of_timestamp or self._infer_timestamp(data)
+
+        event_payload = self._build_event_payload(
+            commodity=commodity,
+            as_of_timestamp=as_of_timestamp,
+            raw_text_items=raw_text_items,
+            llm_json_by_source_id=llm_json_by_source_id or {},
+        )
+        overlay_weights = event_payload["overlay_weights"]
 
         quality_report = self.validator.validate(data, as_of=as_of_timestamp)
         if not quality_report.is_valid or quality_report.flag == "incomplete":
@@ -86,6 +103,8 @@ class CompositeDecisionEngine:
             commodity=commodity,
             latest_features=latest_features,
             macro_features=macro_features,
+            event_features=event_payload["features"],
+            event_directional_weight=float(overlay_weights.get("directional_weight", settings.nlp_event.directional_overlay_weight)),
             as_of_timestamp=as_of_timestamp,
         )
         directional_scores = {signal.horizon: signal.score for signal in directional_signals}
@@ -101,12 +120,25 @@ class CompositeDecisionEngine:
             base_direction=base_direction,
         )
         risk_penalty = self._calculate_risk_penalty(data, directional_signals, macro_confidence, macro_events)
+        event_penalty = event_risk_penalty(event_payload["features"]) * float(overlay_weights.get("risk_weight", settings.nlp_event.risk_penalty_weight))
+        risk_penalty.total_penalty = float(min(1.5, risk_penalty.total_penalty + event_penalty))
         component_scores = self._compute_component_scores(directional_scores, directional_confidences, inefficiency.deviation_z, macro_regime.macro_contribution, risk_penalty, macro_confidence)
+        component_scores["regime"] = float(
+            component_scores["regime"] + event_regime_adjustment(event_payload["features"]) * float(overlay_weights.get("regime_weight", settings.nlp_event.regime_overlay_weight))
+        )
         composite_score = self._aggregate_components(component_scores)
         category, direction, entry_style, horizon = self._classify_suggestion(composite_score, directional_scores, risk_penalty, macro_confidence)
         supporting, contradictory = self._extract_drivers(macro_regime.combined_label, inefficiency.deviation_z, directional_scores, macro_confidence, risk_penalty)
         risks = self._identify_risks(inefficiency.instability_warning, risk_penalty, macro_confidence)
-        explanation = self._generate_explanation(macro_regime.combined_label, directional_scores, inefficiency.deviation_z, risk_penalty, macro_confidence, composite_score)
+        explanation = self._generate_explanation(
+            macro_regime.combined_label,
+            directional_scores,
+            inefficiency.deviation_z,
+            risk_penalty,
+            macro_confidence,
+            composite_score,
+            event_explanations=event_payload["explanations"],
+        )
         calibrated_regime_probability = self._calibrated_regime_probability(macro_regime.combined_label, macro_regime.probability)
         final_confidence = self._compute_final_confidence(composite_score, macro_confidence, quality_report.flag)
 
@@ -146,6 +178,11 @@ class CompositeDecisionEngine:
                 "raw_regime_probability": float(macro_regime.probability),
                 "calibrated_regime_probability": float(calibrated_regime_probability),
                 "confidence_calibrated": bool(self.parameter_state.get("confidence_calibration")),
+                "event_intelligence_features": event_payload["features"],
+                "event_intelligence_diagnostics": event_payload["diagnostics"],
+                "event_overlay_weights": overlay_weights,
+                "event_intelligence_events": event_payload["events"],
+                "event_cluster_manifest": event_payload["cluster_manifest"],
             },
             macro_regime_summary=macro_regime.combined_label,
             macro_feature_highlights=self._extract_macro_highlights(macro_features, as_of_timestamp),
@@ -187,15 +224,78 @@ class CompositeDecisionEngine:
                 "macro_drivers": macro_confidence.key_macro_drivers,
                 "macro_risks": macro_confidence.key_macro_risks,
                 "directional_confidences": directional_confidences,
+                "event_explanations": event_payload["explanations"],
+                "event_overlay_weights": overlay_weights,
             },
         )
         return SignalPackage(suggestion=suggestion, snapshot=snapshot, quality_report=quality_report)
+
+    def _build_event_payload(
+        self,
+        commodity: str,
+        as_of_timestamp: datetime,
+        raw_text_items: List[Union[str, Mapping[str, object]]],
+        llm_json_by_source_id: Dict[str, str],
+    ) -> Dict[str, object]:
+        if not settings.nlp_event.enabled or not raw_text_items:
+            return {
+                "features": {
+                    "supply_shock_score": 0.0,
+                    "demand_strength_score": 0.0,
+                    "demand_weakness_score": 0.0,
+                    "macro_headwind_score": 0.0,
+                    "macro_tailwind_score": 0.0,
+                    "policy_risk_score": 0.0,
+                    "weather_risk_score": 0.0,
+                    "inventory_signal_score": 0.0,
+                    "geopolitics_risk_score": 0.0,
+                    "uncertainty_penalty": 0.0,
+                    "persistent_trend_event_score": 0.0,
+                    "regime_shift_probability_proxy": 0.0,
+                    "event_volatility_risk_score": 0.0,
+                    "entity_country_concentration": 0.0,
+                    "shipping_lane_risk_score": 0.0,
+                    "producer_concentration_risk": 0.0,
+                },
+                "explanations": [],
+                "diagnostics": {"event_count": 0.0},
+                "events": [],
+                "cluster_manifest": [],
+                "overlay_weights": {
+                    "directional_weight": float(settings.nlp_event.directional_overlay_weight),
+                    "regime_weight": float(settings.nlp_event.regime_overlay_weight),
+                    "risk_weight": float(settings.nlp_event.risk_penalty_weight),
+                },
+            }
+
+        bounded_inputs = raw_text_items[: max(1, int(settings.nlp_event.max_items_per_cycle))]
+        result = self.event_intelligence_engine.process_texts(
+            raw_items=bounded_inputs,
+            commodity_scope=[commodity],
+            as_of_timestamp=as_of_timestamp,
+            llm_json_by_source_id=llm_json_by_source_id,
+        )
+        calibrated = calibrate_overlay_weights_for_commodity(commodity)
+        return {
+            "features": result.feature_vector,
+            "explanations": result.explanations,
+            "diagnostics": result.diagnostics,
+            "events": [event.model_dump(mode="json") for event in result.events],
+            "cluster_manifest": result.cluster_manifest,
+            "overlay_weights": {
+                "directional_weight": float(calibrated.directional_weight),
+                "regime_weight": float(calibrated.regime_weight),
+                "risk_weight": float(calibrated.risk_weight),
+            },
+        }
 
     def _build_directional_signals(
         self,
         commodity: str,
         latest_features: Dict[str, float],
         macro_features: List[MacroFeature],
+        event_features: Dict[str, float],
+        event_directional_weight: float,
         as_of_timestamp: datetime,
     ) -> List[DirectionalSignal]:
         signals = []
@@ -212,12 +312,18 @@ class CompositeDecisionEngine:
                 1.0,
                 base_signal.confidence * macro_directional.confidence_multiplier,
             )
+            if settings.nlp_event.enabled:
+                directional_shift = event_directional_adjustment(event_features) * float(event_directional_weight)
+                uncertainty_haircut = min(0.4, event_features.get("uncertainty_penalty", 0.0) * float(settings.nlp_event.confidence_uncertainty_weight))
+            else:
+                directional_shift = 0.0
+                uncertainty_haircut = 0.0
             signals.append(
                 DirectionalSignal(
                     commodity=commodity,
                     horizon=horizon,
-                    score=macro_directional.adjusted_score,
-                    confidence=confidence,
+                    score=macro_directional.adjusted_score + directional_shift,
+                    confidence=max(0.0, min(1.0, confidence * (1.0 - uncertainty_haircut))),
                     features={name: float(latest_features.get(name, 0.0)) for name in settings.signal.directional_feature_names},
                     timestamp=as_of_timestamp,
                     model_version=str(self.parameter_state.get("version_id", "default")),
@@ -358,6 +464,7 @@ class CompositeDecisionEngine:
         risk: RiskPenalty,
         macro_confidence: MacroConfidenceOverlay,
         composite_score: float,
+        event_explanations: Optional[List[str]] = None,
     ) -> str:
         avg_directional = self._weighted_directional_score(directional_scores)
         macro_clause = ""
@@ -365,11 +472,14 @@ class CompositeDecisionEngine:
             macro_clause = " Macro context is supportive."
         elif macro_confidence.macro_conflict_score > 0.25:
             macro_clause = " Macro context is a headwind."
-        return (
+        explanation = (
             f"Regime is {regime_label}. Average directional score is {avg_directional:.2f}, "
             f"inefficiency score is {inefficiency_score:.2f}, and aggregate risk penalty is {risk.total_penalty:.2f}. "
             f"Composite score is {composite_score:.2f}.{macro_clause}"
         )
+        if event_explanations:
+            explanation = explanation + " Event intelligence: " + " | ".join(event_explanations[:2])
+        return explanation
 
     def _compute_final_confidence(
         self,
