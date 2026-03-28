@@ -181,25 +181,158 @@ def run_signal_cycle_only(
     }
 
 
+def _round_optional(value: Optional[float], digits: int = 2) -> Optional[float]:
+    if value is None:
+        return None
+    return round(float(value), digits)
+
+
+def _format_optional_number(value: Optional[float], digits: int = 2, signed: bool = False) -> str:
+    if value is None:
+        return "n/a"
+    format_spec = f"{'+' if signed else ''}.{digits}f"
+    return format(float(value), format_spec)
+
+
+def _format_optional_pct(value: Optional[float], digits: int = 2) -> str:
+    if value is None:
+        return "n/a"
+    return f"{float(value):.{digits}%}"
+
+
+def _compact_list(items: List[str], limit: int = 3) -> str:
+    filtered = [str(item).strip() for item in items if str(item).strip()]
+    if not filtered:
+        return "None"
+    return "; ".join(filtered[:limit])
+
+
+def _sorted_score_items(scores: Dict[Any, Any]) -> List[Tuple[Any, float]]:
+    normalized: List[Tuple[Any, float]] = []
+    for key, value in scores.items():
+        try:
+            normalized.append((key, float(value)))
+        except (TypeError, ValueError):
+            continue
+    return sorted(
+        normalized,
+        key=lambda item: (0, int(item[0])) if str(item[0]).isdigit() else (1, str(item[0])),
+    )
+
+
+def _top_abs_items(values: Dict[str, Any], limit: int = 4) -> Dict[str, float]:
+    normalized: List[Tuple[str, float]] = []
+    for key, value in values.items():
+        try:
+            normalized.append((str(key), float(value)))
+        except (TypeError, ValueError):
+            continue
+    normalized.sort(key=lambda item: abs(item[1]), reverse=True)
+    return {key: round(value, 4) for key, value in normalized[:limit]}
+
+
+def _format_score_map(values: Dict[str, Any], limit: int = 4, label_suffix: str = "") -> str:
+    top_items = list(_top_abs_items(values, limit=limit).items())
+    if not top_items:
+        return "n/a"
+    return ", ".join(f"{key}{label_suffix}={value:.2f}" for key, value in top_items)
+
+
+def _format_directional_scores(scores: Dict[Any, Any]) -> str:
+    ordered = _sorted_score_items(scores)
+    if not ordered:
+        return "n/a"
+    return ", ".join(f"{key}D={value:.2f}" for key, value in ordered)
+
+
+def _primary_regime_probability(suggestion: Any) -> Optional[float]:
+    probabilities = getattr(suggestion, "regime_probabilities", {}) or {}
+    if suggestion.regime_label in probabilities:
+        return float(probabilities[suggestion.regime_label])
+    if probabilities:
+        return float(max(probabilities.values()))
+    return None
+
+
+def _best_horizon_line(evaluation: Any) -> Optional[str]:
+    by_horizon = evaluation.scorecards.get("by_horizon", {}) if hasattr(evaluation, "scorecards") else {}
+    if not isinstance(by_horizon, dict) or not by_horizon:
+        return None
+    best_horizon, payload = max(
+        by_horizon.items(),
+        key=lambda item: (
+            float(item[1].get("hit_rate", 0.0)),
+            float(item[1].get("average_return", 0.0)),
+            -int(item[0]) if str(item[0]).isdigit() else 0,
+        ),
+    )
+    return (
+        f"Best Horizon: {best_horizon}D | hit_rate={float(payload.get('hit_rate', 0.0)):.2%} "
+        f"| avg_return={float(payload.get('average_return', 0.0)):.4f} "
+        f"| rank_ic={float(payload.get('rank_ic', 0.0)):.2f}"
+    )
+
+
 def format_summary(results: Dict[str, Any]) -> str:
     suggestion = results["signal_package"].suggestion
+    snapshot = results["signal_package"].snapshot
     evaluation = results["evaluation"]
     adaptation = results["adaptation"]
+    diagnostics = suggestion.diagnostics or {}
+    component_scores = diagnostics.get("component_scores", {})
+    directional_confidences = diagnostics.get("directional_confidences", {})
+    feature_vector = diagnostics.get("feature_vector", {})
+    event_features = diagnostics.get("event_intelligence_features", {})
+    regime_probability = _primary_regime_probability(suggestion)
     lines = [
         "Commodities Quant Engine Local Run",
         f"Commodity: {suggestion.commodity}",
-        f"Signal ID: {suggestion.signal_id}",
         f"Timestamp: {suggestion.timestamp}",
-        f"Category: {suggestion.final_category}",
-        f"Direction: {suggestion.preferred_direction}",
-        f"Confidence: {suggestion.confidence_score:.2f}",
-        f"Composite Score: {suggestion.composite_score:.2f}",
-        f"Evaluation Sample Size: {evaluation.summary_metrics.get('sample_size', 0)}",
-        f"Evaluation Hit Rate: {evaluation.summary_metrics.get('overall_hit_rate', 0.0):.2%}",
-        f"Evaluation Avg Return: {evaluation.summary_metrics.get('overall_average_return', 0.0):.4f}",
-        f"Adaptation Mode: {adaptation.mode}",
+        f"Venue: {suggestion.exchange} | contract={suggestion.active_contract} | signal_id={suggestion.signal_id}",
+        (
+            f"Decision: {suggestion.final_category} | direction={suggestion.preferred_direction} "
+            f"| confidence={suggestion.confidence_score:.2f} | score={suggestion.composite_score:.2f}"
+        ),
+        (
+            f"Execution: entry={suggestion.suggested_entry_style} | horizon={suggestion.suggested_holding_horizon}D "
+            f"| data_quality={suggestion.data_quality_flag}"
+        ),
+        (
+            f"Regime: {suggestion.regime_label} | p={_format_optional_number(regime_probability, digits=2)} "
+            f"| macro_align={_format_optional_number(suggestion.macro_alignment_score, digits=2)} "
+            f"| macro_conflict={_format_optional_number(suggestion.macro_conflict_score, digits=2)} "
+            f"| event_risk={'high' if suggestion.macro_event_risk_flag else 'low'} "
+            f"| macro_conf_adj={_format_optional_number(suggestion.macro_confidence_adjustment, digits=2, signed=True)}"
+        ),
+        f"Directional Term Structure: {_format_directional_scores(suggestion.directional_scores)}",
+        f"Directional Confidence: {_format_directional_scores(directional_confidences)}",
+        f"Component Stack: {_format_score_map(component_scores, limit=5)}",
+        f"Feature Highlights: {_format_score_map(feature_vector, limit=5)}",
+        f"Event Overlay: {_format_score_map(event_features, limit=4)}",
+        f"Drivers: {_compact_list(suggestion.key_supporting_drivers, limit=3)}",
+        f"Contradictions: {_compact_list(suggestion.key_contradictory_drivers, limit=2)}",
+        f"Risks: {_compact_list(suggestion.principal_risks, limit=3)}",
+        (
+            f"Evaluation: sample={evaluation.summary_metrics.get('sample_size', 0)} "
+            f"| hit_rate={evaluation.summary_metrics.get('overall_hit_rate', 0.0):.2%} "
+            f"| avg_return={evaluation.summary_metrics.get('overall_average_return', 0.0):.4f} "
+            f"| rank_ic={float(evaluation.summary_metrics.get('overall_rank_ic', 0.0)):.2f} "
+            f"| brier={float(evaluation.summary_metrics.get('overall_brier_score', 0.0)):.3f}"
+        ),
+        (
+            f"Event Split: event_hit={_format_optional_pct(evaluation.summary_metrics.get('event_window_hit_rate'))} "
+            f"| non_event_hit={_format_optional_pct(evaluation.summary_metrics.get('non_event_hit_rate'))}"
+        ),
+        (
+            f"Adaptation: mode={adaptation.mode} | promoted={'yes' if adaptation.promoted else 'no'} "
+            f"| approved={'yes' if adaptation.approved else 'no'}"
+        ),
         f"Adaptation Reason: {adaptation.reason}",
+        f"Model Lineage: model={snapshot.model_version} | config={snapshot.config_version}",
     ]
+    best_horizon = _best_horizon_line(evaluation)
+    if best_horizon:
+        lines.append(best_horizon)
     if adaptation.candidate_version_id:
         lines.append(f"Candidate Version: {adaptation.candidate_version_id}")
     if evaluation.degradation_alerts:
@@ -211,15 +344,30 @@ def format_summary(results: Dict[str, Any]) -> str:
 def format_live_summary(entry: Dict[str, Any], poll_timestamp: datetime) -> str:
     package = entry["results"]["signal_package"]
     suggestion = package.suggestion
+    snapshot = package.snapshot
+    diagnostics = suggestion.diagnostics or {}
+    component_scores = diagnostics.get("component_scores", {})
+    regime_probability = _primary_regime_probability(suggestion)
     lines = [
         "Commodities Quant Engine Live Run",
         f"Poll Timestamp: {poll_timestamp}",
-        f"Commodity: {suggestion.commodity}",
-        f"Market Timestamp: {suggestion.timestamp}",
-        f"Category: {suggestion.final_category}",
-        f"Direction: {suggestion.preferred_direction}",
-        f"Confidence: {suggestion.confidence_score:.2f}",
-        f"Composite Score: {suggestion.composite_score:.2f}",
+        f"Commodity: {suggestion.commodity} | venue={suggestion.exchange} | contract={suggestion.active_contract}",
+        f"Market Timestamp: {suggestion.timestamp} | signal_id={suggestion.signal_id}",
+        (
+            f"Decision: {suggestion.final_category} | direction={suggestion.preferred_direction} "
+            f"| confidence={suggestion.confidence_score:.2f} | score={suggestion.composite_score:.2f}"
+        ),
+        (
+            f"Regime: {suggestion.regime_label} | p={_format_optional_number(regime_probability, digits=2)} "
+            f"| macro_align={_format_optional_number(suggestion.macro_alignment_score, digits=2)} "
+            f"| macro_conflict={_format_optional_number(suggestion.macro_conflict_score, digits=2)} "
+            f"| event_risk={'high' if suggestion.macro_event_risk_flag else 'low'}"
+        ),
+        f"Directional Term Structure: {_format_directional_scores(suggestion.directional_scores)}",
+        f"Component Stack: {_format_score_map(component_scores, limit=4)}",
+        f"Drivers: {_compact_list(suggestion.key_supporting_drivers, limit=2)}",
+        f"Risks: {_compact_list(suggestion.principal_risks, limit=2)}",
+        f"Model Lineage: model={snapshot.model_version} | config={snapshot.config_version}",
         f"Snapshot Persisted: {'yes' if entry.get('snapshot_persisted') else 'no'}",
         f"Live Log Path: {entry.get('live_log_path', 'n/a')}",
     ]
@@ -303,6 +451,9 @@ def _live_state_payload(results: Dict[str, Any], poll_timestamp: datetime, data_
         "category": suggestion.final_category,
         "confidence": round(float(suggestion.confidence_score), 4),
         "composite_score": round(float(suggestion.composite_score), 4),
+        "regime_label": suggestion.regime_label,
+        "suggested_horizon": int(suggestion.suggested_holding_horizon),
+        "event_risk": bool(suggestion.macro_event_risk_flag),
         "signal_id": suggestion.signal_id,
         "data_mode": data_mode,
     }
@@ -317,7 +468,17 @@ def should_persist_live_snapshot(
 ) -> bool:
     current_state = _live_state_payload(results, poll_timestamp, data_mode)
     previous_state = storage.read_json(LIVE_STATE_DOMAIN, commodity)
-    keys = ("market_timestamp", "direction", "category", "confidence", "composite_score", "data_mode")
+    keys = (
+        "market_timestamp",
+        "direction",
+        "category",
+        "confidence",
+        "composite_score",
+        "regime_label",
+        "suggested_horizon",
+        "event_risk",
+        "data_mode",
+    )
     changed = any(previous_state.get(key) != current_state.get(key) for key in keys)
     if changed or not previous_state:
         storage.write_json(LIVE_STATE_DOMAIN, commodity, current_state)
@@ -335,18 +496,40 @@ def persist_live_observation(
 ) -> str:
     suggestion = results["signal_package"].suggestion
     snapshot = results["signal_package"].snapshot
+    diagnostics = suggestion.diagnostics or {}
+    directional_confidences = diagnostics.get("directional_confidences", {})
+    component_scores = diagnostics.get("component_scores", {})
+    event_features = diagnostics.get("event_intelligence_features", {})
     payload = {
         "poll_timestamp": poll_timestamp.isoformat(),
         "market_timestamp": suggestion.timestamp.isoformat() if hasattr(suggestion.timestamp, "isoformat") else str(suggestion.timestamp),
         "commodity": commodity,
         "signal_id": suggestion.signal_id,
+        "exchange": suggestion.exchange,
         "active_contract": suggestion.active_contract,
         "category": suggestion.final_category,
         "direction": suggestion.preferred_direction,
         "confidence": round(float(suggestion.confidence_score), 6),
         "composite_score": round(float(suggestion.composite_score), 6),
         "regime_label": suggestion.regime_label,
+        "regime_probability": _round_optional(_primary_regime_probability(suggestion), digits=6),
         "suggested_horizon": int(suggestion.suggested_holding_horizon),
+        "entry_style": suggestion.suggested_entry_style,
+        "data_quality_flag": suggestion.data_quality_flag,
+        "macro_alignment_score": _round_optional(suggestion.macro_alignment_score, digits=6),
+        "macro_conflict_score": _round_optional(suggestion.macro_conflict_score, digits=6),
+        "macro_event_risk_flag": bool(suggestion.macro_event_risk_flag),
+        "macro_confidence_adjustment": round(float(suggestion.macro_confidence_adjustment), 6),
+        "directional_scores": {str(key): round(float(value), 6) for key, value in suggestion.directional_scores.items()},
+        "directional_confidences": {str(key): round(float(value), 6) for key, value in directional_confidences.items()},
+        "component_scores": {str(key): round(float(value), 6) for key, value in component_scores.items()},
+        "feature_highlights": _top_abs_items(snapshot.feature_vector, limit=5),
+        "event_feature_highlights": _top_abs_items(event_features, limit=5),
+        "key_drivers": suggestion.key_supporting_drivers[:3],
+        "contradictory_drivers": suggestion.key_contradictory_drivers[:3],
+        "principal_risks": suggestion.principal_risks[:3],
+        "macro_drivers": suggestion.key_macro_drivers[:3],
+        "macro_risks": suggestion.key_macro_risks[:3],
         "data_mode": data_mode,
         "snapshot_persisted": bool(snapshot_persisted),
         "model_version": snapshot.model_version,

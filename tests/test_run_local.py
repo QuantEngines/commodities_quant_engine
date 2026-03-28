@@ -29,6 +29,8 @@ def test_run_local_demo_cycle(tmp_path):
 
     summary = format_summary(results)
     assert "Commodity: GOLD" in summary
+    assert "Directional Term Structure:" in summary
+    assert "Feature Highlights:" in summary
     assert results["signal_package"].suggestion.signal_id
     assert results["evaluation"].summary_metrics["sample_size"] >= 1
 
@@ -203,3 +205,7 @@ def test_live_observation_is_appended_to_compressed_log(tmp_path):
     assert path.endswith(".jsonl.gz")
     assert len(records) == 1
     assert records[0]["commodity"] == "GOLD"
+    assert records[0]["exchange"]
+    assert "directional_scores" in records[0]
+    assert "component_scores" in records[0]
+    assert "feature_highlights" in records[0]

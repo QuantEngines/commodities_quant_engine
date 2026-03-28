@@ -5,6 +5,66 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 
+def _format_optional_number(value: Optional[float], digits: int = 2, signed: bool = False) -> str:
+    if value is None:
+        return "n/a"
+    format_spec = f"{'+' if signed else ''}.{digits}f"
+    return format(float(value), format_spec)
+
+
+def _compact_list(items: List[str], limit: int = 4) -> str:
+    filtered = [str(item).strip() for item in items if str(item).strip()]
+    if not filtered:
+        return "None"
+    return "; ".join(filtered[:limit])
+
+
+def _sorted_score_items(scores: Dict[Any, Any]) -> List[tuple[Any, float]]:
+    normalized: List[tuple[Any, float]] = []
+    for key, value in scores.items():
+        try:
+            normalized.append((key, float(value)))
+        except (TypeError, ValueError):
+            continue
+    return sorted(
+        normalized,
+        key=lambda item: (0, int(item[0])) if str(item[0]).isdigit() else (1, str(item[0])),
+    )
+
+
+def _top_abs_items(values: Dict[str, Any], limit: int = 5) -> Dict[str, float]:
+    normalized: List[tuple[str, float]] = []
+    for key, value in values.items():
+        try:
+            normalized.append((str(key), float(value)))
+        except (TypeError, ValueError):
+            continue
+    normalized.sort(key=lambda item: abs(item[1]), reverse=True)
+    return {key: round(value, 4) for key, value in normalized[:limit]}
+
+
+def _format_score_map(values: Dict[str, Any], limit: int = 5) -> str:
+    top_items = list(_top_abs_items(values, limit=limit).items())
+    if not top_items:
+        return "n/a"
+    return ", ".join(f"{key}={value:.2f}" for key, value in top_items)
+
+
+def _format_directional_scores(scores: Dict[Any, Any]) -> str:
+    ordered = _sorted_score_items(scores)
+    if not ordered:
+        return "n/a"
+    return ", ".join(f"{key}D={value:.2f}" for key, value in ordered)
+
+
+def _primary_regime_probability(regime_label: str, probabilities: Dict[str, float]) -> Optional[float]:
+    if regime_label in probabilities:
+        return float(probabilities[regime_label])
+    if probabilities:
+        return float(max(probabilities.values()))
+    return None
+
+
 @dataclass
 class Commodity:
     symbol: str
@@ -150,54 +210,53 @@ class Suggestion:
     news_narrative_summary: Optional[str] = None
 
     def to_markdown(self) -> str:
+        diagnostics = self.diagnostics or {}
+        component_scores = diagnostics.get("component_scores", {})
+        directional_confidences = diagnostics.get("directional_confidences", {})
+        feature_vector = diagnostics.get("feature_vector", {})
+        event_features = diagnostics.get("event_intelligence_features", {})
+        quality_issues = diagnostics.get("quality_issues", [])
+        regime_probability = _primary_regime_probability(self.regime_label, self.regime_probabilities or {})
         return f"""
 # {self.commodity} Trading Suggestion
 
-**Timestamp:** {self.timestamp}
-**Exchange:** {self.exchange}
-**Active Contract:** {self.active_contract}
-**Signal ID:** {self.signal_id or "n/a"}
+## Decision Snapshot
+- **Timestamp:** {self.timestamp}
+- **Exchange:** {self.exchange}
+- **Active Contract:** {self.active_contract}
+- **Signal ID:** {self.signal_id or "n/a"}
+- **Decision:** {self.final_category} | direction={self.preferred_direction} | confidence={self.confidence_score:.2f} | score={self.composite_score:.2f}
+- **Execution:** entry={self.suggested_entry_style} | horizon={self.suggested_holding_horizon}D | data_quality={self.data_quality_flag}
+- **Regime:** {self.regime_label} | p={_format_optional_number(regime_probability, digits=2)} | macro_align={_format_optional_number(self.macro_alignment_score, digits=2)} | macro_conflict={_format_optional_number(self.macro_conflict_score, digits=2)} | event_risk={'high' if self.macro_event_risk_flag else 'low'} | macro_conf_adj={_format_optional_number(self.macro_confidence_adjustment, digits=2, signed=True)}
+- **Model Lineage:** model={self.model_version or "n/a"} | config={self.config_version or "n/a"}
 
-## Market Regime
-- **Label:** {self.regime_label}
-- **Probabilities:** {', '.join(f'{k}: {v:.2f}' for k, v in self.regime_probabilities.items())}
-
-## Signals
-- **Directional Scores:** {', '.join(f'{k}D: {v:.2f}' for k, v in self.directional_scores.items())}
+## Signal Anatomy
+- **Directional Term Structure:** {_format_directional_scores(self.directional_scores)}
+- **Directional Confidence:** {_format_directional_scores(directional_confidences)}
 - **Inefficiency Score:** {self.inefficiency_score:.2f}
 - **Risk Penalty:** {self.risk_penalty:.2f}
-- **Composite Score:** {self.composite_score:.2f}
+- **Component Stack:** {_format_score_map(component_scores, limit=5)}
+- **Feature Highlights:** {_format_score_map(feature_vector, limit=5)}
+- **Event Overlay:** {_format_score_map(event_features, limit=4)}
+- **Macro Features:** {_format_score_map(self.macro_feature_highlights, limit=5)}
 
-## Suggestion
-- **Category:** {self.final_category}
-- **Direction:** {self.preferred_direction}
-- **Entry Style:** {self.suggested_entry_style}
-- **Holding Horizon:** {self.suggested_holding_horizon} days
-- **Confidence:** {self.confidence_score:.2f}
-
-## Explanation
+## Thesis
 {self.explanation_summary}
 
-## Drivers
-**Supporting:** {'; '.join(self.key_supporting_drivers) or 'None'}  
-**Contradictory:** {'; '.join(self.key_contradictory_drivers) or 'None'}
-
-## Risks
-{'; '.join(self.principal_risks) or 'No acute risks flagged'}
-
-**Data Quality:** {self.data_quality_flag}
+- **Supporting Drivers:** {_compact_list(self.key_supporting_drivers, limit=4)}
+- **Contradictions:** {_compact_list(self.key_contradictory_drivers, limit=3)}
+- **Principal Risks:** {_compact_list(self.principal_risks, limit=4)}
+- **Quality Issues:** {_compact_list(quality_issues, limit=4)}
 
 ## Macro Context
-{f"**Macro Regime:** {self.macro_regime_summary}" if self.macro_regime_summary else "**Macro Regime:** Not available"}
-{f"**Macro Features:** {', '.join(f'{k}: {v:.2f}' for k, v in self.macro_feature_highlights.items())}" if self.macro_feature_highlights else "**Macro Features:** Not available"}
-{f"**Macro Alignment:** {self.macro_alignment_score:.2f}" if self.macro_alignment_score is not None else "**Macro Alignment:** Not available"}
-{f"**Macro Conflict:** {self.macro_conflict_score:.2f}" if self.macro_conflict_score is not None else "**Macro Conflict:** Not available"}
-{f"**Event Risk:** {'High' if self.macro_event_risk_flag else 'Low'}"}
-{f"**Macro Confidence Adjustment:** {self.macro_confidence_adjustment:.2f}"}
-{f"**Macro Explanation:** {self.macro_explanation_summary}" if self.macro_explanation_summary else "**Macro Explanation:** Not available"}
-{f"**Key Macro Drivers:** {'; '.join(self.key_macro_drivers)}" if self.key_macro_drivers else "**Key Macro Drivers:** None identified"}
-{f"**Key Macro Risks:** {'; '.join(self.key_macro_risks)}" if self.key_macro_risks else "**Key Macro Risks:** None identified"}
-{f"**News Narrative:** {self.news_narrative_summary}" if self.news_narrative_summary else "**News Narrative:** No significant macro news"}
+- **Macro Regime:** {self.macro_regime_summary or "Not available"}
+- **Macro Alignment:** {_format_optional_number(self.macro_alignment_score, digits=2)}
+- **Macro Conflict:** {_format_optional_number(self.macro_conflict_score, digits=2)}
+- **Macro Confidence Adjustment:** {_format_optional_number(self.macro_confidence_adjustment, digits=2, signed=True)}
+- **Macro Explanation:** {self.macro_explanation_summary or "Not available"}
+- **Key Macro Drivers:** {_compact_list(self.key_macro_drivers, limit=4)}
+- **Key Macro Risks:** {_compact_list(self.key_macro_risks, limit=4)}
+- **News Narrative:** {self.news_narrative_summary or "No significant macro news"}
 """.strip()
 
 
