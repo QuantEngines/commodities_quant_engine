@@ -9,6 +9,7 @@ __pycache__/
 artifacts/
 results/
 reports/
+docs/
 cache/
 data/cache/
 raw/
