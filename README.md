@@ -28,8 +28,10 @@ The repository was refactored from a mostly scaffolded signal stack into a resea
 - `config/`: typed settings for commodities, signal parameters, evaluation, adaptation, and storage
 - `data/models.py`: canonical domain models for suggestions, signal snapshots, evaluations, and parameter versions
 - `data/ingestion/`: local-first/free provider adapters, provider registry, and market-data service
+- `data/ingestion/shipping/`: shipping adapter interfaces plus local/manual/public stubs
 - `data/quality_checks/`: market-data validation and stale/incomplete data detection
 - `data/storage/`: local parquet/JSON artifact storage
+- `shipping/`: shipping geographies, processing, features, and overlay logic
 - `regimes/`: regime classification
 - `signals/`: directional, inefficiency, macro overlays, and composite suggestion engine
 - `analytics/evaluation/`: realized-outcome evaluation engine
@@ -41,12 +43,13 @@ The repository was refactored from a mostly scaffolded signal stack into a resea
 1. Validate market data.
 2. Build timestamp-safe technical features.
 3. Generate regime, directional, inefficiency, and macro-adjusted composite signals.
-4. Persist a `SignalSnapshot` artifact.
-5. Evaluate historical snapshots against realized outcomes over 1D/3D/5D/10D/20D horizons.
-6. Produce scorecards, confidence calibration, regime calibration, and drift alerts.
-7. Persist calibration artifacts that are consumed by live signal generation.
-8. Fit candidate parameter updates on historical evaluated signals using purged walk-forward validation.
-9. Save candidate and active parameter versions with evidence and safety checks.
+4. Optionally add shipping-intelligence context from config-driven geographies and flow features.
+5. Persist a `SignalSnapshot` artifact.
+6. Evaluate historical snapshots against realized outcomes over 1D/3D/5D/10D/20D horizons.
+7. Produce scorecards, confidence calibration, regime calibration, and drift alerts.
+8. Persist calibration artifacts that are consumed by live signal generation.
+9. Fit candidate parameter updates on historical evaluated signals using purged walk-forward validation.
+10. Save candidate and active parameter versions with evidence and safety checks.
 
 ### Calibration And Drift Artifacts
 
@@ -198,6 +201,55 @@ The ingestion layer now defaults to free or local sources:
 - paid providers like Bloomberg and Reuters remain optional and disabled by default
 
 This keeps the system usable in a local research setup without premium subscriptions, while preserving extension points for paid feeds later.
+
+## Shipping Intelligence Layer
+
+The repository now includes an optional shipping-intelligence subsystem for logistics-sensitive commodities.
+
+- Config-driven ports, anchorages, chokepoints, and corridors live in `config/shipping_geographies.yaml`
+- Adapter interfaces for AIS, port calls, route events, weather, and satellite context live under `data/ingestion/shipping/`
+- Processing, aggregation, and first-pass features live under `shipping/`
+- Composite suggestions can accept `shipping_feature_vectors` and turn them into bounded context rather than mandatory core inputs
+
+Initial feature families include:
+
+- port congestion
+- anchorage buildup
+- route disruption
+- chokepoint stress
+- tanker flow momentum
+- shipping data quality scoring
+
+The design is explicitly free/public-data-first today and leaves clean adapter seams for premium maritime feeds later.
+
+See `docs/shipping_intelligence_architecture.md` for the architecture note.
+
+### Shipping Demo
+
+```bash
+python run_shipping_intelligence_demo.py
+```
+
+### Shipping Usage Example
+
+```python
+from commodities_quant_engine import ResearchWorkflow, ShippingFeaturePipeline
+
+workflow = ResearchWorkflow()
+shipping_vectors = ShippingFeaturePipeline().run(
+    commodity="CRUDEOIL",
+    vessel_positions=my_local_vessel_positions_df,
+    route_events=my_manual_route_events_df,
+)
+
+package = workflow.run_signal_cycle(
+    commodity="CRUDEOIL",
+    price_data=price_df,
+    shipping_feature_vectors=shipping_vectors,
+)
+```
+
+If no shipping vectors are supplied, the existing engine behavior is preserved.
 
 ## Sample Local Data Layout
 
