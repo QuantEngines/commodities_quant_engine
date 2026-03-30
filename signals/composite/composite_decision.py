@@ -24,6 +24,8 @@ from ...data.models import (
 )
 from ...data.quality_checks import MarketDataValidator
 from ...regimes.regime_engine import RegimeEngine
+from ...shipping.models import ShippingFeatureVector, ShippingSignalContext
+from ...shipping.signals import ShippingOverlay
 from ...signals.directional.directional_alpha import DirectionalAlphaEngine
 from ...signals.inefficiency.inefficiency_engine import InefficiencyEngine
 from ...signals.macro.confidence_overlay import MacroConfidenceOverlay as MacroConfidenceOverlayEngine
@@ -45,6 +47,7 @@ class CompositeDecisionEngine:
         self.macro_regime_overlay = MacroRegimeOverlay(self.regime_engine)
         self.macro_directional_overlay = MacroDirectionalOverlay(self.directional_engine)
         self.macro_confidence_overlay = MacroConfidenceOverlayEngine()
+        self.shipping_overlay = ShippingOverlay()
         self.event_intelligence_engine = EventIntelligenceEngine()
 
     def generate_suggestion(
@@ -53,6 +56,7 @@ class CompositeDecisionEngine:
         commodity: str,
         macro_features: Optional[List[MacroFeature]] = None,
         macro_events: Optional[List[MacroEvent]] = None,
+        shipping_feature_vectors: Optional[List[ShippingFeatureVector]] = None,
         as_of_timestamp: Optional[datetime] = None,
     ) -> Suggestion:
         return self.generate_signal_package(
@@ -60,6 +64,7 @@ class CompositeDecisionEngine:
             commodity=commodity,
             macro_features=macro_features,
             macro_events=macro_events,
+            shipping_feature_vectors=shipping_feature_vectors,
             as_of_timestamp=as_of_timestamp,
         ).suggestion
 
@@ -69,12 +74,14 @@ class CompositeDecisionEngine:
         commodity: str,
         macro_features: Optional[List[MacroFeature]] = None,
         macro_events: Optional[List[MacroEvent]] = None,
+        shipping_feature_vectors: Optional[List[ShippingFeatureVector]] = None,
         raw_text_items: Optional[List[Union[str, Mapping[str, object]]]] = None,
         llm_json_by_source_id: Optional[Dict[str, str]] = None,
         as_of_timestamp: Optional[datetime] = None,
     ) -> SignalPackage:
         macro_features = macro_features or []
         macro_events = macro_events or []
+        shipping_feature_vectors = shipping_feature_vectors or []
         raw_text_items = raw_text_items or []
         as_of_timestamp = as_of_timestamp or self._infer_timestamp(data)
 
@@ -111,6 +118,13 @@ class CompositeDecisionEngine:
         directional_confidences = {signal.horizon: signal.confidence for signal in directional_signals}
         inefficiency = self.inefficiency_engine.detect_inefficiency(data, commodity)
         base_direction = self._determine_direction(directional_scores)
+        shipping_context = self.shipping_overlay.build_context(
+            commodity=commodity,
+            timestamp=as_of_timestamp,
+            shipping_feature_vectors=shipping_feature_vectors,
+            base_direction=base_direction,
+            base_regime=macro_regime.combined_label,
+        )
         macro_confidence = self.macro_confidence_overlay.compute_confidence_adjustment(
             commodity=commodity,
             timestamp=as_of_timestamp,
@@ -119,28 +133,44 @@ class CompositeDecisionEngine:
             base_regime=macro_regime.combined_label,
             base_direction=base_direction,
         )
-        risk_penalty = self._calculate_risk_penalty(data, directional_signals, macro_confidence, macro_events)
+        risk_penalty = self._calculate_risk_penalty(data, directional_signals, macro_confidence, macro_events, shipping_context)
         event_penalty = event_risk_penalty(event_payload["features"]) * float(overlay_weights.get("risk_weight", settings.nlp_event.risk_penalty_weight))
         risk_penalty.total_penalty = float(min(1.5, risk_penalty.total_penalty + event_penalty))
-        component_scores = self._compute_component_scores(directional_scores, directional_confidences, inefficiency.deviation_z, macro_regime.macro_contribution, risk_penalty, macro_confidence)
+        component_scores = self._compute_component_scores(
+            directional_scores,
+            directional_confidences,
+            inefficiency.deviation_z,
+            macro_regime.macro_contribution,
+            risk_penalty,
+            macro_confidence,
+            shipping_context,
+        )
         component_scores["regime"] = float(
             component_scores["regime"] + event_regime_adjustment(event_payload["features"]) * float(overlay_weights.get("regime_weight", settings.nlp_event.regime_overlay_weight))
         )
         composite_score = self._aggregate_components(component_scores)
-        category, direction, entry_style, horizon = self._classify_suggestion(composite_score, directional_scores, risk_penalty, macro_confidence)
-        supporting, contradictory = self._extract_drivers(macro_regime.combined_label, inefficiency.deviation_z, directional_scores, macro_confidence, risk_penalty)
-        risks = self._identify_risks(inefficiency.instability_warning, risk_penalty, macro_confidence)
+        category, direction, entry_style, horizon = self._classify_suggestion(composite_score, directional_scores, risk_penalty, macro_confidence, shipping_context)
+        supporting, contradictory = self._extract_drivers(
+            macro_regime.combined_label,
+            inefficiency.deviation_z,
+            directional_scores,
+            macro_confidence,
+            risk_penalty,
+            shipping_context,
+        )
+        risks = self._identify_risks(inefficiency.instability_warning, risk_penalty, macro_confidence, shipping_context)
         explanation = self._generate_explanation(
             macro_regime.combined_label,
             directional_scores,
             inefficiency.deviation_z,
             risk_penalty,
             macro_confidence,
+            shipping_context,
             composite_score,
             event_explanations=event_payload["explanations"],
         )
         calibrated_regime_probability = self._calibrated_regime_probability(macro_regime.combined_label, macro_regime.probability)
-        final_confidence = self._compute_final_confidence(composite_score, macro_confidence, quality_report.flag)
+        final_confidence = self._compute_final_confidence(composite_score, macro_confidence, shipping_context, quality_report.flag)
 
         active_contract = contract_master.get_active_contract(commodity, as_of_timestamp.date())
         signal_id = self._build_signal_id(commodity, as_of_timestamp)
@@ -183,6 +213,8 @@ class CompositeDecisionEngine:
                 "event_overlay_weights": overlay_weights,
                 "event_intelligence_events": event_payload["events"],
                 "event_cluster_manifest": event_payload["cluster_manifest"],
+                "shipping_context": shipping_context.to_dict(),
+                "shipping_features": shipping_context.shipping_features,
             },
             macro_regime_summary=macro_regime.combined_label,
             macro_feature_highlights=self._extract_macro_highlights(macro_features, as_of_timestamp),
@@ -194,6 +226,18 @@ class CompositeDecisionEngine:
             key_macro_drivers=macro_confidence.key_macro_drivers,
             key_macro_risks=macro_confidence.key_macro_risks,
             news_narrative_summary=macro_confidence.news_narrative_summary,
+            shipping_summary=shipping_context.shipping_summary,
+            shipping_alignment_score=shipping_context.shipping_alignment_score,
+            shipping_conflict_score=shipping_context.shipping_conflict_score,
+            shipping_risk_flag=shipping_context.shipping_risk_penalty > 0.15,
+            shipping_data_quality_score=shipping_context.shipping_data_quality_score,
+            shipping_support_boost=shipping_context.shipping_support_boost,
+            shipping_risk_penalty=shipping_context.shipping_risk_penalty,
+            shipping_data_quality_penalty=shipping_context.shipping_data_quality_penalty,
+            shipping_explanation_summary=shipping_context.shipping_explanation_summary,
+            key_shipping_drivers=shipping_context.key_shipping_drivers,
+            route_chokepoint_notes=shipping_context.route_chokepoint_notes,
+            port_congestion_notes=shipping_context.port_congestion_notes,
         )
         snapshot = SignalSnapshot(
             signal_id=signal_id,
@@ -219,10 +263,15 @@ class CompositeDecisionEngine:
             data_quality_flag=quality_report.flag,
             macro_alignment_score=macro_confidence.macro_alignment_score,
             macro_conflict_score=macro_confidence.macro_conflict_score,
+            shipping_alignment_score=shipping_context.shipping_alignment_score,
+            shipping_conflict_score=shipping_context.shipping_conflict_score,
+            shipping_data_quality_score=shipping_context.shipping_data_quality_score,
             metadata={
                 "contradictory_drivers": contradictory,
                 "macro_drivers": macro_confidence.key_macro_drivers,
                 "macro_risks": macro_confidence.key_macro_risks,
+                "shipping_drivers": shipping_context.key_shipping_drivers,
+                "shipping_notes": shipping_context.route_chokepoint_notes + shipping_context.port_congestion_notes,
                 "directional_confidences": directional_confidences,
                 "event_explanations": event_payload["explanations"],
                 "event_overlay_weights": overlay_weights,
@@ -350,6 +399,7 @@ class CompositeDecisionEngine:
         directional_signals: List[DirectionalSignal],
         macro_confidence: MacroConfidenceOverlay,
         macro_events: List[MacroEvent],
+        shipping_context: ShippingSignalContext,
     ) -> RiskPenalty:
         vol_penalty = max(0.0, float(data["close"].pct_change().rolling(20, min_periods=5).std(ddof=0).iloc[-1] * 10.0 - 0.15))
         disagreement_penalty = self._directional_disagreement_penalty(directional_signals)
@@ -357,13 +407,17 @@ class CompositeDecisionEngine:
         event_risk = macro_confidence.event_risk_penalty
         if any(event.expected_impact == "high" for event in macro_events):
             event_risk = max(event_risk, 0.1)
-        total_penalty = min(1.5, vol_penalty + disagreement_penalty + liquidity_penalty + event_risk)
+        shipping_risk_penalty = float(shipping_context.shipping_risk_penalty)
+        shipping_data_quality_penalty = float(shipping_context.shipping_data_quality_penalty)
+        total_penalty = min(1.5, vol_penalty + disagreement_penalty + liquidity_penalty + event_risk + shipping_risk_penalty + shipping_data_quality_penalty)
         return RiskPenalty(
             volatility_spike=vol_penalty,
             signal_disagreement=disagreement_penalty,
             event_risk=event_risk,
             liquidity_penalty=liquidity_penalty,
             total_penalty=total_penalty,
+            shipping_risk_penalty=shipping_risk_penalty,
+            shipping_data_quality_penalty=shipping_data_quality_penalty,
         )
 
     def _compute_component_scores(
@@ -374,17 +428,25 @@ class CompositeDecisionEngine:
         macro_regime_contribution: float,
         risk_penalty: RiskPenalty,
         macro_confidence: MacroConfidenceOverlay,
+        shipping_context: ShippingSignalContext,
     ) -> Dict[str, float]:
         directional_component = self._weighted_directional_score(directional_scores)
         directional_alignment = self._directional_alignment(directional_scores)
         average_confidence = float(np.mean(list(directional_confidences.values()))) if directional_confidences else 0.0
-        regime_component = macro_regime_contribution
+        regime_component = macro_regime_contribution + shipping_context.shipping_regime_bias
         macro_component = macro_confidence.macro_alignment_score - macro_confidence.macro_conflict_score
+        shipping_component = (
+            shipping_context.shipping_alignment_score
+            - shipping_context.shipping_conflict_score
+            + shipping_context.shipping_support_boost
+            - shipping_context.shipping_data_quality_penalty * 0.5
+        )
         return {
-            "directional": directional_component * directional_alignment * max(0.5, average_confidence),
+            "directional": directional_component * directional_alignment * max(0.5, average_confidence) + shipping_context.shipping_directional_bias,
             "inefficiency": float(-inefficiency_score),
             "regime": regime_component,
             "macro": macro_component,
+            "shipping": shipping_component,
             "risk": float(risk_penalty.total_penalty),
         }
 
@@ -394,6 +456,7 @@ class CompositeDecisionEngine:
             + component_scores["inefficiency"] * settings.composite.inefficiency_weight
             + component_scores["regime"] * settings.composite.regime_weight
             + component_scores["macro"] * settings.composite.macro_weight
+            + component_scores.get("shipping", 0.0) * settings.composite.shipping_weight
             - component_scores["risk"] * settings.composite.risk_weight
         )
 
@@ -403,8 +466,9 @@ class CompositeDecisionEngine:
         directional_scores: Dict[int, float],
         risk: RiskPenalty,
         macro_confidence: MacroConfidenceOverlay,
+        shipping_context: ShippingSignalContext,
     ) -> Tuple[str, str, str, int]:
-        effective_score = composite_score + macro_confidence.final_confidence_adjustment
+        effective_score = composite_score + macro_confidence.final_confidence_adjustment + shipping_context.shipping_support_boost - shipping_context.shipping_data_quality_penalty * 0.1
         preferred_horizon = self._preferred_horizon(directional_scores, effective_score)
         if abs(effective_score) < settings.composite.neutral_threshold or risk.total_penalty > 0.95:
             return "Neutral / No Edge", "neutral", "wait", 0
@@ -425,6 +489,7 @@ class CompositeDecisionEngine:
         directional_scores: Dict[int, float],
         macro_confidence: MacroConfidenceOverlay,
         risk: RiskPenalty,
+        shipping_context: ShippingSignalContext,
     ) -> Tuple[List[str], List[str]]:
         supporting = [f"Regime: {regime_label}"]
         contradictory: List[str] = []
@@ -434,10 +499,14 @@ class CompositeDecisionEngine:
             supporting.append(f"Deviation from fair value is {inefficiency_score:.2f} z")
         if macro_confidence.key_macro_drivers:
             supporting.extend(macro_confidence.key_macro_drivers[:2])
+        if shipping_context.key_shipping_drivers:
+            supporting.extend(shipping_context.key_shipping_drivers[:2])
         if risk.total_penalty > 0.4:
             contradictory.append(f"Aggregate risk penalty is elevated at {risk.total_penalty:.2f}")
         if macro_confidence.macro_conflict_score > 0.25:
             contradictory.append("Macro context partially conflicts with the technical setup")
+        if shipping_context.shipping_conflict_score > 0.25:
+            contradictory.append("Shipping flow context conflicts with the current setup")
         return supporting[:4], contradictory[:3]
 
     def _identify_risks(
@@ -445,6 +514,7 @@ class CompositeDecisionEngine:
         inefficiency_instability: bool,
         risk: RiskPenalty,
         macro_confidence: MacroConfidenceOverlay,
+        shipping_context: ShippingSignalContext,
     ) -> List[str]:
         risks = []
         if inefficiency_instability:
@@ -454,6 +524,10 @@ class CompositeDecisionEngine:
         if risk.signal_disagreement > 0.5:
             risks.append("Directional horizons are not aligned")
         risks.extend(macro_confidence.key_macro_risks[:2])
+        if shipping_context.shipping_data_quality_penalty > 0.5:
+            risks.append("Shipping coverage is sparse or noisy")
+        if shipping_context.route_chokepoint_notes:
+            risks.append(shipping_context.route_chokepoint_notes[0])
         return risks[:4]
 
     def _generate_explanation(
@@ -463,6 +537,7 @@ class CompositeDecisionEngine:
         inefficiency_score: float,
         risk: RiskPenalty,
         macro_confidence: MacroConfidenceOverlay,
+        shipping_context: ShippingSignalContext,
         composite_score: float,
         event_explanations: Optional[List[str]] = None,
     ) -> str:
@@ -472,10 +547,15 @@ class CompositeDecisionEngine:
             macro_clause = " Macro context is supportive."
         elif macro_confidence.macro_conflict_score > 0.25:
             macro_clause = " Macro context is a headwind."
+        shipping_clause = ""
+        if shipping_context.shipping_alignment_score > 0.25:
+            shipping_clause = " Shipping context is supportive."
+        elif shipping_context.shipping_conflict_score > 0.25:
+            shipping_clause = " Shipping context is a headwind."
         explanation = (
             f"Regime is {regime_label}. Average directional score is {avg_directional:.2f}, "
             f"inefficiency score is {inefficiency_score:.2f}, and aggregate risk penalty is {risk.total_penalty:.2f}. "
-            f"Composite score is {composite_score:.2f}.{macro_clause}"
+            f"Composite score is {composite_score:.2f}.{macro_clause}{shipping_clause}"
         )
         if event_explanations:
             explanation = explanation + " Event intelligence: " + " | ".join(event_explanations[:2])
@@ -485,9 +565,11 @@ class CompositeDecisionEngine:
         self,
         composite_score: float,
         macro_confidence: MacroConfidenceOverlay,
+        shipping_context: ShippingSignalContext,
         data_quality_flag: str,
     ) -> float:
-        raw = 1.0 / (1.0 + np.exp(-(abs(composite_score) + macro_confidence.final_confidence_adjustment) * 1.5))
+        shipping_adjustment = shipping_context.shipping_support_boost - shipping_context.shipping_conflict_score * 0.10 - shipping_context.shipping_data_quality_penalty * 0.20
+        raw = 1.0 / (1.0 + np.exp(-(abs(composite_score) + macro_confidence.final_confidence_adjustment + shipping_adjustment) * 1.5))
         if data_quality_flag == "stale":
             raw *= 0.8
         bounded = float(max(0.0, min(1.0, raw)))

@@ -12,6 +12,7 @@ from ..config.settings import settings
 from ..data.models import AdaptationDecision, EvaluationArtifact, MacroEvent, MacroFeature, SignalPackage
 from ..data.storage.local import LocalStorage
 from ..nlp.macro_event_engine.cluster_report import ClusterReportGenerator
+from ..shipping.models import ShippingFeatureVector
 from ..signals.composite.composite_decision import CompositeDecisionEngine
 
 
@@ -29,6 +30,7 @@ class ResearchWorkflow:
         price_data: pd.DataFrame,
         macro_features: Optional[List[MacroFeature]] = None,
         macro_events: Optional[List[MacroEvent]] = None,
+        shipping_feature_vectors: Optional[List[ShippingFeatureVector]] = None,
         raw_text_items: Optional[List[Union[str, Mapping[str, object]]]] = None,
         llm_json_by_source_id: Optional[Dict[str, str]] = None,
         as_of_timestamp: Optional[datetime] = None,
@@ -47,6 +49,7 @@ class ResearchWorkflow:
             commodity=commodity,
             macro_features=macro_features,
             macro_events=macro_events,
+            shipping_feature_vectors=shipping_feature_vectors,
             raw_text_items=raw_text_items,
             llm_json_by_source_id=llm_json_by_source_id,
             as_of_timestamp=as_of_timestamp,

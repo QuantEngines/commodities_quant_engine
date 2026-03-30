@@ -161,6 +161,8 @@ class RiskPenalty:
     event_risk: float
     liquidity_penalty: float
     total_penalty: float
+    shipping_risk_penalty: float = 0.0
+    shipping_data_quality_penalty: float = 0.0
 
 
 @dataclass
@@ -208,6 +210,18 @@ class Suggestion:
     key_macro_drivers: List[str] = field(default_factory=list)
     key_macro_risks: List[str] = field(default_factory=list)
     news_narrative_summary: Optional[str] = None
+    shipping_summary: Optional[str] = None
+    shipping_alignment_score: Optional[float] = None
+    shipping_conflict_score: Optional[float] = None
+    shipping_risk_flag: bool = False
+    shipping_data_quality_score: Optional[float] = None
+    shipping_support_boost: float = 0.0
+    shipping_risk_penalty: float = 0.0
+    shipping_data_quality_penalty: float = 0.0
+    shipping_explanation_summary: Optional[str] = None
+    key_shipping_drivers: List[str] = field(default_factory=list)
+    route_chokepoint_notes: List[str] = field(default_factory=list)
+    port_congestion_notes: List[str] = field(default_factory=list)
 
     def to_markdown(self) -> str:
         diagnostics = self.diagnostics or {}
@@ -215,6 +229,7 @@ class Suggestion:
         directional_confidences = diagnostics.get("directional_confidences", {})
         feature_vector = diagnostics.get("feature_vector", {})
         event_features = diagnostics.get("event_intelligence_features", {})
+        shipping_features = diagnostics.get("shipping_features", {})
         quality_issues = diagnostics.get("quality_issues", [])
         regime_probability = _primary_regime_probability(self.regime_label, self.regime_probabilities or {})
         return f"""
@@ -228,6 +243,7 @@ class Suggestion:
 - **Decision:** {self.final_category} | direction={self.preferred_direction} | confidence={self.confidence_score:.2f} | score={self.composite_score:.2f}
 - **Execution:** entry={self.suggested_entry_style} | horizon={self.suggested_holding_horizon}D | data_quality={self.data_quality_flag}
 - **Regime:** {self.regime_label} | p={_format_optional_number(regime_probability, digits=2)} | macro_align={_format_optional_number(self.macro_alignment_score, digits=2)} | macro_conflict={_format_optional_number(self.macro_conflict_score, digits=2)} | event_risk={'high' if self.macro_event_risk_flag else 'low'} | macro_conf_adj={_format_optional_number(self.macro_confidence_adjustment, digits=2, signed=True)}
+- **Shipping:** summary={self.shipping_summary or "Not available"} | align={_format_optional_number(self.shipping_alignment_score, digits=2)} | conflict={_format_optional_number(self.shipping_conflict_score, digits=2)} | risk={'high' if self.shipping_risk_flag else 'low'} | ship_quality={_format_optional_number(self.shipping_data_quality_score, digits=2)}
 - **Model Lineage:** model={self.model_version or "n/a"} | config={self.config_version or "n/a"}
 
 ## Signal Anatomy
@@ -238,6 +254,7 @@ class Suggestion:
 - **Component Stack:** {_format_score_map(component_scores, limit=5)}
 - **Feature Highlights:** {_format_score_map(feature_vector, limit=5)}
 - **Event Overlay:** {_format_score_map(event_features, limit=4)}
+- **Shipping Overlay:** {_format_score_map(shipping_features, limit=5)}
 - **Macro Features:** {_format_score_map(self.macro_feature_highlights, limit=5)}
 
 ## Thesis
@@ -257,6 +274,18 @@ class Suggestion:
 - **Key Macro Drivers:** {_compact_list(self.key_macro_drivers, limit=4)}
 - **Key Macro Risks:** {_compact_list(self.key_macro_risks, limit=4)}
 - **News Narrative:** {self.news_narrative_summary or "No significant macro news"}
+
+## Shipping Context
+- **Shipping Summary:** {self.shipping_summary or "Not available"}
+- **Shipping Alignment:** {_format_optional_number(self.shipping_alignment_score, digits=2)}
+- **Shipping Conflict:** {_format_optional_number(self.shipping_conflict_score, digits=2)}
+- **Shipping Support Boost:** {_format_optional_number(self.shipping_support_boost, digits=2, signed=True)}
+- **Shipping Risk Penalty:** {_format_optional_number(self.shipping_risk_penalty, digits=2)}
+- **Shipping Data Quality:** {_format_optional_number(self.shipping_data_quality_score, digits=2)}
+- **Shipping Explanation:** {self.shipping_explanation_summary or "No shipping overlay available"}
+- **Key Shipping Drivers:** {_compact_list(self.key_shipping_drivers, limit=4)}
+- **Route / Chokepoint Notes:** {_compact_list(self.route_chokepoint_notes, limit=4)}
+- **Port Congestion Notes:** {_compact_list(self.port_congestion_notes, limit=4)}
 """.strip()
 
 
@@ -285,6 +314,9 @@ class SignalSnapshot:
     data_quality_flag: str
     macro_alignment_score: Optional[float] = None
     macro_conflict_score: Optional[float] = None
+    shipping_alignment_score: Optional[float] = None
+    shipping_conflict_score: Optional[float] = None
+    shipping_data_quality_score: Optional[float] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:

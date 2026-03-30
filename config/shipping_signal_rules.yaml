@@ -1,0 +1,47 @@
+{
+  "overlay_weights": {
+    "directional": 0.12,
+    "regime": 0.15,
+    "risk": 0.18,
+    "confidence": 0.10
+  },
+  "commodity_groups": {
+    "energy": {
+      "commodities": ["CRUDEOIL", "CRUDEOILM", "BRCRUDEOIL"],
+      "supply_tightening_bias": 1.0,
+      "flow_release_bias": 0.9
+    },
+    "base_metals": {
+      "commodities": ["COPPER", "COPPERM", "ALUMINIUM", "ALUMINI", "ZINC", "ZINCMINI", "LEAD", "LEADMINI", "NICKEL", "NICKELM", "TIN", "STEELREBAR"],
+      "supply_tightening_bias": 0.7,
+      "flow_release_bias": 0.7
+    },
+    "agri": {
+      "commodities": ["CPO", "RBDPALMOLEIN", "SOYABEAN", "WHEAT", "MAIZE"],
+      "supply_tightening_bias": 0.55,
+      "flow_release_bias": 0.55
+    },
+    "default": {
+      "commodities": [],
+      "supply_tightening_bias": 0.5,
+      "flow_release_bias": 0.5
+    }
+  },
+  "feature_weights": {
+    "stress": {
+      "port_congestion_score": 0.28,
+      "anchorage_buildup_score": 0.22,
+      "route_disruption_score": 0.25,
+      "chokepoint_stress_score": 0.25
+    },
+    "release": {
+      "tanker_flow_momentum": 0.60,
+      "shipping_momentum_score": 0.20
+    },
+    "risk": {
+      "route_disruption_score": 0.30,
+      "chokepoint_stress_score": 0.35,
+      "shipping_data_quality_penalty": 0.35
+    }
+  }
+}

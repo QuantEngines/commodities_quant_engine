@@ -1,0 +1,38 @@
+{
+  "normalization": {
+    "rolling_window_days": 20,
+    "min_periods": 5
+  },
+  "processing": {
+    "anchorage_speed_threshold_knots": 1.5,
+    "anchorage_min_duration_hours": 8.0,
+    "speed_anomaly_ratio_threshold": 0.55,
+    "max_track_gap_hours": 24
+  },
+  "features": {
+    "port_congestion": {
+      "enabled": true,
+      "baseline_window_days": 20
+    },
+    "anchorage_buildup": {
+      "enabled": true,
+      "baseline_window_days": 20
+    },
+    "route_disruption": {
+      "enabled": true,
+      "baseline_window_days": 20
+    },
+    "chokepoint_stress": {
+      "enabled": true,
+      "baseline_window_days": 20
+    },
+    "tanker_flow": {
+      "enabled": true,
+      "baseline_window_days": 10
+    },
+    "quality": {
+      "enabled": true,
+      "expected_daily_position_updates": 6
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "providers": {
+    "generic_public_ais": {
+      "adapter_class": "data.ingestion.shipping.providers.generic_ais_adapter.GenericAISAdapter",
+      "enabled": false,
+      "description": "Placeholder for free/public AIS feeds. Configure concrete endpoints locally.",
+      "config": {
+        "base_url": null,
+        "timeout_seconds": 30
+      }
+    },
+    "csv_vessel_local": {
+      "adapter_class": "data.ingestion.shipping.providers.csv_vessel_adapter.CSVVesselAdapter",
+      "enabled": true,
+      "description": "Local CSV/parquet ingestion for vessel positions and port calls.",
+      "config": {
+        "position_paths": {},
+        "port_call_paths": {}
+      }
+    },
+    "manual_route_events": {
+      "adapter_class": "data.ingestion.shipping.providers.manual_event_adapter.ManualEventAdapter",
+      "enabled": true,
+      "description": "Manual CSV/JSON event ingestion for chokepoints, route disruptions, and analyst annotations.",
+      "config": {
+        "event_paths": {}
+      }
+    },
+    "public_weather_context": {
+      "adapter_class": "data.ingestion.shipping.providers.public_weather_adapter.PublicWeatherAdapter",
+      "enabled": false,
+      "description": "Public weather/ocean context via local cache or user-supplied exports.",
+      "config": {
+        "csv_paths": {},
+        "allow_remote": false
+      }
+    },
+    "satellite_stub": {
+      "adapter_class": "data.ingestion.shipping.providers.satellite_stub_adapter.SatelliteStubAdapter",
+      "enabled": false,
+      "description": "Future satellite context placeholder; no paid assumptions."
+    }
+  }
+}

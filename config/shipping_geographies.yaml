@@ -1,0 +1,162 @@
+{
+  "ports": [
+    {
+      "port_id": "FUJAIRAH",
+      "name": "Fujairah",
+      "country": "UAE",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [25.05, 56.24, 25.26, 56.43]
+      },
+      "anchorage_zone_id": "ANCHORAGE_FUJAIRAH",
+      "commodity_tags": ["CRUDEOIL", "CRUDEOILM", "BRCRUDEOIL"],
+      "geography_tags": ["middle_east", "gulf_export"]
+    },
+    {
+      "port_id": "SINGAPORE",
+      "name": "Singapore",
+      "country": "Singapore",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [1.15, 103.60, 1.42, 104.05]
+      },
+      "anchorage_zone_id": "ANCHORAGE_SINGAPORE",
+      "commodity_tags": ["CRUDEOIL", "BRCRUDEOIL", "COPPER", "ALUMINIUM"],
+      "geography_tags": ["asia_hub", "refining_hub"]
+    },
+    {
+      "port_id": "MUNDRA",
+      "name": "Mundra",
+      "country": "India",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [22.64, 69.64, 22.82, 69.84]
+      },
+      "anchorage_zone_id": "ANCHORAGE_MUNDRA",
+      "commodity_tags": ["CRUDEOIL", "BRCRUDEOIL", "COPPER", "ALUMINIUM"],
+      "geography_tags": ["india_west_coast", "import_hub"]
+    }
+  ],
+  "anchorage_zones": [
+    {
+      "zone_id": "ANCHORAGE_FUJAIRAH",
+      "name": "Fujairah Anchorage",
+      "zone_type": "anchorage",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [24.95, 56.10, 25.30, 56.55]
+      },
+      "commodity_tags": ["CRUDEOIL", "CRUDEOILM", "BRCRUDEOIL"],
+      "geography_tags": ["middle_east", "anchorage"]
+    },
+    {
+      "zone_id": "ANCHORAGE_SINGAPORE",
+      "name": "Singapore Anchorage",
+      "zone_type": "anchorage",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [1.05, 103.50, 1.50, 104.15]
+      },
+      "commodity_tags": ["CRUDEOIL", "BRCRUDEOIL", "COPPER", "ALUMINIUM"],
+      "geography_tags": ["asia_hub", "anchorage"]
+    },
+    {
+      "zone_id": "ANCHORAGE_MUNDRA",
+      "name": "Mundra Anchorage",
+      "zone_type": "anchorage",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [22.58, 69.56, 22.88, 69.90]
+      },
+      "commodity_tags": ["CRUDEOIL", "BRCRUDEOIL", "COPPER", "ALUMINIUM"],
+      "geography_tags": ["india_west_coast", "anchorage"]
+    }
+  ],
+  "chokepoints": [
+    {
+      "chokepoint_id": "HORMUZ",
+      "name": "Strait of Hormuz",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [25.70, 56.00, 26.80, 57.50]
+      },
+      "commodity_tags": ["CRUDEOIL", "CRUDEOILM", "BRCRUDEOIL"],
+      "geography_tags": ["middle_east", "chokepoint"]
+    },
+    {
+      "chokepoint_id": "BAB_EL_MANDEB",
+      "name": "Bab el-Mandeb",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [12.20, 42.10, 13.70, 43.80]
+      },
+      "commodity_tags": ["CRUDEOIL", "BRCRUDEOIL"],
+      "geography_tags": ["red_sea", "chokepoint"]
+    },
+    {
+      "chokepoint_id": "MALACCA",
+      "name": "Strait of Malacca",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [1.00, 100.80, 5.90, 104.50]
+      },
+      "commodity_tags": ["CRUDEOIL", "BRCRUDEOIL", "COPPER", "ALUMINIUM"],
+      "geography_tags": ["asia", "chokepoint"]
+    }
+  ],
+  "route_corridors": [
+    {
+      "corridor_id": "GULF_TO_SINGAPORE",
+      "name": "Gulf to Singapore Tanker Corridor",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [1.00, 56.00, 26.80, 104.50]
+      },
+      "commodity_tags": ["CRUDEOIL", "CRUDEOILM", "BRCRUDEOIL"],
+      "geography_tags": ["tanker_corridor", "asia_bound"]
+    },
+    {
+      "corridor_id": "HORMUZ_TO_INDIA_WEST",
+      "name": "Hormuz to India West Coast",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [18.00, 56.00, 26.80, 70.00]
+      },
+      "commodity_tags": ["CRUDEOIL", "BRCRUDEOIL"],
+      "geography_tags": ["tanker_corridor", "india_bound"]
+    },
+    {
+      "corridor_id": "CAPE_REROUTE_PROXY",
+      "name": "Cape Reroute Proxy Corridor",
+      "geometry": {
+        "type": "bbox",
+        "coordinates": [-36.00, 10.00, 0.50, 40.00]
+      },
+      "commodity_tags": ["CRUDEOIL", "BRCRUDEOIL"],
+      "geography_tags": ["reroute", "cape"]
+    }
+  ],
+  "port_clusters": [
+    {
+      "cluster_id": "GULF_EXPORT_CLUSTER",
+      "name": "Gulf Export Cluster",
+      "port_ids": ["FUJAIRAH"],
+      "commodity_tags": ["CRUDEOIL", "CRUDEOILM", "BRCRUDEOIL"],
+      "geography_tags": ["middle_east", "export_cluster"]
+    },
+    {
+      "cluster_id": "ASIA_REFINING_CLUSTER",
+      "name": "Asia Refining Cluster",
+      "port_ids": ["SINGAPORE"],
+      "commodity_tags": ["CRUDEOIL", "BRCRUDEOIL"],
+      "geography_tags": ["asia_hub", "refining_cluster"]
+    },
+    {
+      "cluster_id": "INDIA_WEST_CLUSTER",
+      "name": "India West Coast Cluster",
+      "port_ids": ["MUNDRA"],
+      "commodity_tags": ["CRUDEOIL", "BRCRUDEOIL", "COPPER", "ALUMINIUM"],
+      "geography_tags": ["india_west_coast", "import_cluster"]
+    }
+  ]
+}

@@ -155,6 +155,7 @@ class CompositeSettings(BaseModel):
     inefficiency_weight: float = 0.20
     regime_weight: float = 0.15
     macro_weight: float = 0.10
+    shipping_weight: float = 0.08
     risk_weight: float = 0.20
     neutral_threshold: float = 0.25
     weak_threshold: float = 0.60
@@ -262,12 +263,25 @@ class StorageSettings(BaseModel):
     report_store: str = "reports"
 
 
+class ShippingSettings(BaseModel):
+    enabled: bool = True
+    aggregation_frequency: str = "1D"
+    max_track_gap_hours: int = 24
+    default_timezone: str = "UTC"
+    sources_config_path: str = "config/shipping_sources.yaml"
+    geographies_config_path: str = "config/shipping_geographies.yaml"
+    features_config_path: str = "config/shipping_features.yaml"
+    signal_rules_config_path: str = "config/shipping_signal_rules.yaml"
+    allow_sparse_overlay: bool = True
+
+
 class Settings(BaseSettings):
     data_sources: Dict[str, DataSourceConfig] = Field(default_factory=dict)
     commodities: Dict[str, CommodityConfig] = Field(default_factory=dict)
     macro: MacroSettings = Field(default_factory=MacroSettings)
     signal: SignalSettings = Field(default_factory=SignalSettings)
     composite: CompositeSettings = Field(default_factory=CompositeSettings)
+    shipping: ShippingSettings = Field(default_factory=ShippingSettings)
     nlp_event: NLPEventSettings = Field(default_factory=NLPEventSettings)
     evaluation: EvaluationSettings = Field(default_factory=EvaluationSettings)
     adaptation: AdaptationSettings = Field(default_factory=AdaptationSettings)
