@@ -12,6 +12,7 @@ from ..config.settings import settings
 from ..data.models import AdaptationDecision, EvaluationArtifact, MacroEvent, MacroFeature, SignalPackage
 from ..data.storage.local import LocalStorage
 from ..nlp.macro_event_engine.cluster_report import ClusterReportGenerator
+from ..shipping.context_builder import shipping_context_builder
 from ..shipping.models import ShippingFeatureVector
 from ..signals.composite.composite_decision import CompositeDecisionEngine
 
@@ -37,6 +38,15 @@ class ResearchWorkflow:
         persist_snapshot: bool = True,
         persist_report: bool = True,
     ) -> SignalPackage:
+        as_of_timestamp = as_of_timestamp or datetime.now()
+        
+        # Auto-generate shipping context if not provided (Sprint 1: Always-on shipping)
+        if shipping_feature_vectors is None:
+            shipping_feature_vectors = shipping_context_builder.build(
+                commodity=commodity,
+                as_of_timestamp=as_of_timestamp,
+            )
+        
         active_version = self.adaptation_engine.load_active_version(commodity)
         calibration_payload = self.storage.read_json(settings.storage.evaluation_store, f"{commodity}_calibration")
         parameter_state: Dict[str, object] = {"version_id": active_version.version_id, **active_version.parameters}

@@ -12,6 +12,7 @@ from .mospi import MOSPIDataSource
 from .ncdex import NCDEXDataSource
 from .nse import NSEDataSource
 from .ppac import PPACDataSource
+from .zerodha_kiteconnect import ZerodhaKiteConnectDataSource
 
 
 class ProviderRegistry:
@@ -19,6 +20,7 @@ class ProviderRegistry:
 
     def __init__(self):
         self.providers: Dict[str, DataSource] = {
+            "ZERODHA": ZerodhaKiteConnectDataSource(self._provider_config("ZERODHA")),
             "MCX": MCXDataSource(self._provider_config("MCX")),
             "COMMODITIES_API": CommoditiesAPIDataSource(self._provider_config("COMMODITIES_API")),
             "NCDEX": NCDEXDataSource(self._provider_config("NCDEX")),

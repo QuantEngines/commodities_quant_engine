@@ -316,6 +316,16 @@ settings = Settings()
 
 if not settings.data_sources:
     settings.data_sources = {
+        "ZERODHA": DataSourceConfig(
+            name="ZERODHA",
+            base_url=None,
+            config={
+                "api_key": "${ZERODHA_API_KEY}",  # Set via .env or environment
+                "api_secret": "${ZERODHA_API_SECRET}",  # Set via .env or environment
+                "access_token": "${ZERODHA_ACCESS_TOKEN}",  # Set via .env or environment
+                "fallback_enabled": True,
+            },
+        ),
         "MCX": DataSourceConfig(name="MCX", base_url=None),
         "COMMODITIES_API": DataSourceConfig(
             name="COMMODITIES_API",
