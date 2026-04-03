@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Any
-from datetime import datetime, date
+from datetime import date
 import pandas as pd
 
 from ...data.models import Contract, OHLCV

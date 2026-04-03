@@ -1,60 +1,64 @@
-"""
-EndToEndDemo — Integration of all five components.
+"""End-to-end demo for the suggestion-only research pipeline."""
 
-Demonstrates complete signal generation pipeline:
-1. Sprint 1: Shipping Context Builder (always-on shipping integration)
-2. Sprint 2: Factor Timing Engine (regime-aware dynamic weighting)
-3. Sprint 3: Portfolio Optimization Engine (Markowitz commodity allocation)
-4. Component 1: Historical Backtester (factor accumulation)
-5. Component 2: Live Factor Refresh Scheduler (daily refresh)
-6. Component 3: Inter-Market Data Sources (COMEX/LBME basis)
-7. Component 4: Intraday Factor Rotation (cross-timeframe signals)
-8. Component 5: Execution Layer (order generation + routing)
-
-Execution flow:
-  Tick
-    ├─ Load daily signals (regimes, factors)
-    ├─ Build shipping context (always-on)
-    ├─ Generate intraday signals (within daily frames)
-    ├─ Optimize portfolio (Markowitz)
-    ├─ Inter-market basis (arbitrage opportunities)  
-    ├─ Generate orders (execution layer)
-    └─ Persist metrics + order audit
-
-Backtester runs offline (daily refresh from scheduler).
-"""
-
-from datetime import datetime, timedelta
+from dataclasses import asdict
+from datetime import datetime
 from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
 
-# Sprint components
-from analytics.factor_timing import factor_timing_engine
-from portfolio.optimization_engine import portfolio_optimization_engine
-from shipping.context_builder import shipping_context_builder
+from commodities_quant_engine.analytics.backtester import HistoricalBacktester
+from commodities_quant_engine.analytics.factor_timing import factor_timing_engine
+from commodities_quant_engine.analytics.live_scheduler import LiveFactorScheduler
+from commodities_quant_engine.config.settings import settings
+from commodities_quant_engine.data.ingestion.inter_market import InterMarketBasisCalculator
+from commodities_quant_engine.data.storage.local import LocalStorage
+from commodities_quant_engine.portfolio.optimization_engine import portfolio_optimization_engine
+from commodities_quant_engine.portfolio.position_suggestion import PositionSuggestionEngine
+from commodities_quant_engine.shipping.context_builder import shipping_context_builder
+from commodities_quant_engine.signals.composite.composite_decision import CompositeDecisionEngine
+from commodities_quant_engine.signals.intraday.intraday_engine import IntradayFactorRotationEngine
 
-# Advanced components
-from analytics.backtester import (
-    HistoricalBacktester,
-    generate_backtest_report,
-)
-from analytics.live_scheduler import LiveFactorScheduler
-from data.ingestion.inter_market import (
-    InterMarketBasisCalculator,
-    COMEXDataSource,
-    LBMEDataSource,
-)
-from signals.intraday.intraday_engine import IntradayFactorRotationEngine
 
-# Execution
-from execution import ExecutionEngine, order_audit
+def _make_mock_daily_frame(seed: int, periods: int = 320) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range(end=pd.Timestamp.utcnow().normalize(), periods=periods, freq="B")
+    returns = rng.normal(loc=0.0004, scale=0.012, size=periods)
+    close = 100.0 * np.cumprod(1.0 + returns)
+    open_ = close * (1.0 + rng.normal(0.0, 0.0025, size=periods))
+    high = np.maximum(open_, close) * (1.0 + rng.uniform(0.001, 0.01, size=periods))
+    low = np.minimum(open_, close) * (1.0 - rng.uniform(0.001, 0.01, size=periods))
+    volume = rng.integers(5_000, 50_000, size=periods)
+    return pd.DataFrame(
+        {
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        },
+        index=dates,
+    )
 
-# Core
-from config.settings import settings
-from data.storage.local import LocalStorage
-from signals.composite.composite_decision_engine import composite_decision_engine
+
+def _make_mock_intraday_frame(seed: int, periods: int = 9) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    timestamps = pd.date_range("2026-01-01 09:00", periods=periods, freq="1h")
+    close = 50.0 + np.cumsum(rng.normal(0.0, 0.8, size=periods))
+    open_ = close + rng.normal(0.0, 0.3, size=periods)
+    high = np.maximum(open_, close) + rng.uniform(0.1, 0.8, size=periods)
+    low = np.minimum(open_, close) - rng.uniform(0.1, 0.8, size=periods)
+    volume = rng.integers(1_000, 5_000, size=periods)
+    return pd.DataFrame(
+        {
+            "timestamp": timestamps,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        }
+    )
 
 
 def run_end_to_end_demo(
@@ -62,339 +66,295 @@ def run_end_to_end_demo(
     include_backtester: bool = True,
     include_intraday: bool = True,
     include_inter_market: bool = True,
-    include_execution: bool = True,
+    include_position_suggestions: bool = True,
+    portfolio_budget: float = 1_000_000.0,
 ) -> Dict:
-    """
-    Run complete end-to-end signal generation and execution pipeline.
-
-    Args:
-        test_commodities: Optional list of commodities to test (default: ['CRUDEOIL', 'GOLD'])
-        include_backtester: Run historical backtester (slow)
-        include_intraday: Generate intraday signals
-        include_inter_market: Calculate inter-market basis
-        include_execution: Generate orders and execution plans
-
-    Returns:
-        Results dict with all pipeline outputs
-    """
     test_commodities = test_commodities or ["CRUDEOIL", "GOLD", "COPPER"]
     storage = LocalStorage()
+    composite_engine = CompositeDecisionEngine()
+    suggestion_engine = PositionSuggestionEngine(storage=storage)
     results = {
         "timestamp": datetime.now().isoformat(),
         "commodities": test_commodities,
         "components": {},
     }
 
+    daily_price_data = {
+        commodity: _make_mock_daily_frame(seed=100 + idx)
+        for idx, commodity in enumerate(test_commodities)
+    }
+    signal_snapshots: Dict[str, list] = {}
+
     print("\n" + "=" * 80)
     print("END-TO-END SIGNAL GENERATION PIPELINE")
     print("=" * 80)
 
-    # ============================================================================
-    # STEP 1: DAILY SIGNAL GENERATION (Composite Decision Engine)
-    # ============================================================================
     print("\n[STEP 1] Generating daily signals (regime detection + multi-factor)...")
-
     daily_signals = {}
-    for commodity in test_commodities:
+    for idx, commodity in enumerate(test_commodities):
         try:
-            signal = composite_decision_engine.generate_signal(
+            price_frame = daily_price_data[commodity]
+            as_of_timestamp = price_frame.index[-21].to_pydatetime()
+            shipping_vectors = shipping_context_builder.build(
                 commodity=commodity,
-                regime="neutral",  # Assume neutral for demo
-                include_shipping=True,  # Sprint 1: Shipping included
+                as_of_timestamp=as_of_timestamp,
+            )
+            signal_package = composite_engine.generate_signal_package(
+                data=price_frame.loc[:as_of_timestamp],
+                commodity=commodity,
+                shipping_feature_vectors=shipping_vectors,
+                as_of_timestamp=as_of_timestamp,
+            )
+            signal = asdict(signal_package.suggestion)
+            signal["factor_weights"] = factor_timing_engine.get_factor_weights(
+                commodity=commodity,
+                regime=signal_package.suggestion.regime_label,
+                use_defaults=True,
             )
             daily_signals[commodity] = signal
-            print(f"  ✓ {commodity}: score={signal['composite_score']:.3f}, "
-                  f"confidence={signal['confidence_score']:.3f}")
-        except Exception as e:
-            print(f"  ✗ {commodity}: {e}")
+            signal_snapshots[commodity] = [signal_package.snapshot.to_dict()]
+            print(
+                f"  ✓ {commodity}: score={signal['composite_score']:.3f}, confidence={signal['confidence_score']:.3f}"
+            )
+        except Exception as exc:
+            print(f"  ✗ {commodity}: {exc}")
 
     results["components"]["daily_signals"] = daily_signals
 
-    # ============================================================================
-    # STEP 2: SHIPPING CONTEXT (Sprint 1)
-    # ============================================================================
     print("\n[SPRINT 1] Building shipping context (always-on integration)...")
-
     shipping_contexts = {}
     for commodity in test_commodities:
         try:
             context = shipping_context_builder.build(
                 commodity=commodity,
-                fallback_to_stubs=True,
+                as_of_timestamp=daily_price_data[commodity].index[-21].to_pydatetime(),
             )
             shipping_contexts[commodity] = {
-                "features": context.to_dict() if hasattr(context, "to_dict") else {},
-                "source": "real" if context else "stubs",
+                "features": [item.to_dict() if hasattr(item, "to_dict") else {} for item in context],
+                "source": "stubs" if context else "none",
             }
             print(f"  ✓ {commodity}: {shipping_contexts[commodity]['source']} data")
-        except Exception as e:
-            print(f"  ✗ {commodity}: {e}")
-
+        except Exception as exc:
+            print(f"  ✗ {commodity}: {exc}")
     results["components"]["shipping_contexts"] = shipping_contexts
 
-    # ============================================================================
-    # STEP 3: FACTOR TIMING (Sprint 2)
-    # ============================================================================
     print("\n[SPRINT 2] Computing regime-aware factor weights...")
-
     factor_diagnostics = {}
     try:
-        factor_metrics = factor_timing_engine.get_factor_diagnostics()
         for commodity in test_commodities:
+            regime = daily_signals.get(commodity, {}).get("regime_label", "mean_reverting_rangebound")
             factor_diagnostics[commodity] = {
-                "bullish_weights": {k: v for k, v in factor_metrics.items()},
-                "note": "Regime-weighted factors based on rolling Sharpe ratios",
+                "diagnostics": factor_timing_engine.get_factor_diagnostics(commodity, regime),
+                "weights": factor_timing_engine.get_factor_weights(commodity, regime, use_defaults=True),
+                "note": "Regime-weighted factors based on rolling Sharpe ratios.",
             }
-        print(f"  ✓ Factor timing engine ready (Bullish regime)")
-        for k, v in factor_metrics.items():
-            print(f"    - {k}: {v:.3f}")
-    except Exception as e:
-        print(f"  ✗ Factor timing: {e}")
+        print("  ✓ Factor timing engine ready")
+    except Exception as exc:
+        print(f"  ✗ Factor timing: {exc}")
         factor_diagnostics = {}
-
     results["components"]["factor_timing"] = factor_diagnostics
 
-    # ============================================================================
-    # STEP 4: PORTFOLIO OPTIMIZATION (Sprint 3)
-    # ============================================================================
     print("\n[SPRINT 3] Optimizing portfolio allocation (Markowitz)...")
-
     portfolio_weights = {}
     try:
-        # Create mock signals for optimization
-        commodity_signals = {c: daily_signals.get(c, {}) for c in test_commodities}
-
-        weights = portfolio_optimization_engine.optimize_commodity_weights(
+        commodity_signals = {
+            commodity: max(0.0, float(daily_signals.get(commodity, {}).get("composite_score", 0.0)))
+            for commodity in test_commodities
+        }
+        if not any(score > 0 for score in commodity_signals.values()):
+            commodity_signals = {
+                commodity: max(0.01, abs(float(daily_signals.get(commodity, {}).get("composite_score", 0.0))))
+                for commodity in test_commodities
+            }
+        portfolio_weights = portfolio_optimization_engine.optimize_commodity_weights(
             commodity_signals=commodity_signals,
-            correlation_window=60,
+            price_history={
+                commodity: daily_price_data[commodity]["close"].astype(float).to_numpy()
+                for commodity in test_commodities
+            },
         )
-
-        portfolio_weights = weights
-        total_weight = sum(weights.values())
+        total_weight = sum(portfolio_weights.values())
         print(f"  ✓ Optimization complete (total weight: {total_weight:.1%})")
-        for commodity, weight in weights.items():
+        for commodity, weight in portfolio_weights.items():
             print(f"    - {commodity}: {weight:.1%}")
-    except Exception as e:
-        print(f"  ✗ Portfolio optimization: {e}")
-        # Default equal weight
+    except Exception as exc:
+        print(f"  ✗ Portfolio optimization: {exc}")
         equal_weight = 1.0 / len(test_commodities)
-        portfolio_weights = {c: equal_weight for c in test_commodities}
-
+        portfolio_weights = {commodity: equal_weight for commodity in test_commodities}
     results["components"]["portfolio_weights"] = portfolio_weights
 
-    # ============================================================================
-    # STEP 5: BACKTESTER (Component 1 - Optional)
-    # ============================================================================
     if include_backtester:
         print("\n[COMPONENT 1] Running historical backtester (factor attribution)...")
-
         try:
-            backtester = HistoricalBacktester()
-            for commodity in test_commodities[:1]:  # Just first commodity (slow)
+            backtester = HistoricalBacktester(storage=storage)
+            backtest_summary = {}
+            for commodity in test_commodities[:1]:
                 print(f"  Backtesting {commodity}...")
                 eval_result = backtester.backtest_commodity_historical(
                     commodity=commodity,
-                    lookback_days=250,
+                    price_data=daily_price_data[commodity],
+                    signal_snapshots=signal_snapshots.get(commodity),
+                    horizons=[1, 3, 5, 10],
                 )
-                if eval_result:
-                    print(
-                        f"    ✓ Backtest complete: Sharpe={eval_result.sharpe_ratio:.2f}"
-                    )
-                    # Ingest into factor timing engine
-                    factor_timing_engine.ingest_evaluation_results(eval_result)
-        except Exception as e:
-            print(f"  ✗ Backtester: {e}")
+                backtest_summary[commodity] = {
+                    regime: len(evals) for regime, evals in eval_result.items()
+                }
+                print(f"    ✓ Backtest complete: {sum(len(evals) for evals in eval_result.values())} evaluations")
+            results["components"]["backtester"] = backtest_summary
+        except Exception as exc:
+            print(f"  ✗ Backtester: {exc}")
+            results["components"]["backtester"] = {"status": "failed", "error": str(exc)}
+    else:
+        results["components"]["backtester"] = {"status": "skipped"}
 
-    results["components"]["backtester"] = {"status": "complete" if include_backtester else "skipped"}
-
-    # ============================================================================
-    # STEP 6: LIVE SCHEDULER (Component 2 - Optional)
-    # ============================================================================
     if include_backtester:
         print("\n[COMPONENT 2] Live factor refresh scheduler (daily cron)...")
-
         try:
-            scheduler = LiveFactorScheduler(
-                backtester=HistoricalBacktester(),
-                factor_engine=factor_timing_engine,
-            )
+            scheduler = LiveFactorScheduler(storage=storage)
             status = scheduler.get_refresh_status()
-            print(f"  ✓ Scheduler status: {status.get('status', 'ready')}")
-            print(
-                f"    Last refresh: {status.get('last_refresh_time', 'never')}"
-            )
-            # Don't start automatic scheduler in demo (would run in background)
+            print(f"  ✓ Scheduler status: {status.get('scheduler_type', 'manual')}")
+            print(f"    Last refresh: {status.get('last_refresh', 'never')}")
             print("    (Automatic scheduling available in production)")
-        except Exception as e:
-            print(f"  ✗ Scheduler: {e}")
+            results["components"]["scheduler"] = status
+        except Exception as exc:
+            print(f"  ✗ Scheduler: {exc}")
+            results["components"]["scheduler"] = {"status": "failed", "error": str(exc)}
+    else:
+        results["components"]["scheduler"] = {"status": "skipped"}
 
-    results["components"]["scheduler"] = {"status": "configured"}
-
-    # ============================================================================
-    # STEP 7: INTER-MARKET BASIS (Component 3 - Optional)
-    # ============================================================================
     if include_inter_market:
         print("\n[COMPONENT 3] Computing inter-market basis (arbitrage opportunities)...")
-
+        inter_market_results = {}
         try:
             basis_calc = InterMarketBasisCalculator()
-
-            # Mock some price data for demo
-            mock_mcx_prices = {c: np.random.uniform(40, 60) for c in test_commodities}
-            mock_comex_prices = {c: np.random.uniform(40, 60) for c in test_commodities}
-
-            for commodity in test_commodities:
-                mcx_price = mock_mcx_prices.get(commodity, 50.0)
-                comex_price = mock_comex_prices.get(commodity, 50.0)
-
-                basis_pct = (mcx_price - comex_price) / comex_price * 100
-                opp = basis_calc.get_arbitrage_opportunity(
+            for idx, commodity in enumerate(test_commodities):
+                mcx_price = float(daily_price_data[commodity]["close"].iloc[-1])
+                comex_price = mcx_price * (1.0 + 0.01 * ((idx % 3) - 1))
+                basis_metrics = basis_calc.calculate_commodity_basis(
+                    commodity=commodity,
                     mcx_price=mcx_price,
                     comex_price=comex_price,
-                    historical_mean_basis=0.0,
-                    historical_std_basis=1.0,
+                    fx_rate=84.0,
                 )
+                basis_history = pd.DataFrame(
+                    {
+                        "basis": np.linspace(
+                            basis_metrics["basis"] - 0.5,
+                            basis_metrics["basis"],
+                            num=30,
+                        )
+                    },
+                    index=pd.date_range(end=pd.Timestamp.utcnow().normalize(), periods=30, freq="B"),
+                )
+                opportunity = basis_calc.get_arbitrage_opportunity(
+                    basis_history=basis_history,
+                    commodity=commodity,
+                )
+                inter_market_results[commodity] = {
+                    **basis_metrics,
+                    "opportunity": opportunity,
+                }
+                print(f"  ✓ {commodity}: basis={basis_metrics['basis_pct']:.2f}%, opportunity={opportunity['arbitrage_signal']}")
+        except Exception as exc:
+            print(f"  ✗ Inter-market basis: {exc}")
+            inter_market_results = {"status": "failed", "error": str(exc)}
+        results["components"]["inter_market"] = inter_market_results
+    else:
+        results["components"]["inter_market"] = {"status": "skipped"}
 
-                print(f"  ✓ {commodity}: basis={basis_pct:.2f}%, "
-                      f"opportunity={opp}")
-        except Exception as e:
-            print(f"  ✗ Inter-market basis: {e}")
-
-    results["components"]["inter_market"] = {"status": "complete" if include_inter_market else "skipped"}
-
-    # ============================================================================
-    # STEP 8: INTRADAY FACTOR ROTATION (Component 4 - Optional)
-    # ============================================================================
     if include_intraday:
         print("\n[COMPONENT 4] Generating intraday signals (cross-timeframe)...")
-
+        intraday_results = {}
         try:
             intraday_engine = IntradayFactorRotationEngine()
-
-            # Mock intraday data
-            intraday_signals = {}
-            for commodity in test_commodities:
-                daily_sig = daily_signals.get(commodity, {})
-
-                # Mock intraday price data (9 hours of OHLCV)
-                hours = pd.date_range("09:00", "17:00", freq="1H")
-                intraday_data = pd.DataFrame({
-                    "timestamp": hours,
-                    "open": np.random.uniform(40, 60, len(hours)),
-                    "high": np.random.uniform(60, 70, len(hours)),
-                    "low": np.random.uniform(30, 40, len(hours)),
-                    "close": np.random.uniform(40, 60, len(hours)),
-                    "volume": np.random.randint(1000, 5000, len(hours)),
-                })
-
+            for idx, commodity in enumerate(test_commodities):
                 intraday_signal = intraday_engine.generate_intraday_signal_package(
                     commodity=commodity,
-                    daily_signal=daily_sig,
-                    intraday_price_data=intraday_data,
+                    daily_signal=daily_signals.get(commodity, {}),
+                    intraday_price_data=_make_mock_intraday_frame(seed=500 + idx),
                     interval="1H",
                 )
-
-                intraday_signals[commodity] = intraday_signal
+                intraday_results[commodity] = intraday_signal
                 print(f"  ✓ {commodity}: entry_signal={intraday_signal.get('entry_signal', 'hold')}")
-        except Exception as e:
-            print(f"  ✗ Intraday engine: {e}")
-            intraday_signals = {}
+        except Exception as exc:
+            print(f"  ✗ Intraday engine: {exc}")
+            intraday_results = {"status": "failed", "error": str(exc)}
+        results["components"]["intraday"] = intraday_results
+    else:
+        results["components"]["intraday"] = {"status": "skipped"}
 
-    results["components"]["intraday"] = intraday_signals if include_intraday else {"status": "skipped"}
-
-    # ============================================================================
-    # STEP 9: EXECUTION LAYER (Component 5)
-    # ============================================================================
-    print("\n[COMPONENT 5] Generating execution orders and routing...")
-
-    orders = {}
-    if include_execution:
+    print("\n[COMPONENT 5] Generating budget-aware position suggestions...")
+    position_suggestions = {}
+    if include_position_suggestions:
         try:
-            execution_engine = ExecutionEngine()
-
-            # Mock price data
-            price_data = {c: np.random.uniform(40, 60) for c in test_commodities}
-            vol_data = {c: 0.02 for c in test_commodities}
-
-            orders = execution_engine.execute_portfolio_signals(
+            latest_prices = {
+                commodity: float(frame["close"].iloc[-1])
+                for commodity, frame in daily_price_data.items()
+            }
+            volatility = {
+                commodity: max(0.01, float(frame["close"].pct_change().dropna().std(ddof=0)))
+                for commodity, frame in daily_price_data.items()
+            }
+            position_suggestions = suggestion_engine.generate_portfolio_suggestions(
                 portfolio_weights=portfolio_weights,
                 signal_data=daily_signals,
-                price_data=price_data,
-                market_volatility=vol_data,
-                intraday_profiles=None,  # Could pass real data
+                price_data=latest_prices,
+                portfolio_budget=portfolio_budget,
+                market_volatility=volatility,
+                current_positions=None,
             )
-
-            print(f"  ✓ Order generation complete ({len(orders)} orders)")
-            for commodity, order in orders.items():
+            suggestion_engine.persist_suggestions(position_suggestions)
+            print(f"  ✓ Suggestion generation complete ({len(position_suggestions)} recommendations)")
+            for commodity, suggestion in position_suggestions.items():
                 print(
-                    f"    - {commodity}: {order.direction.value.upper()} "
-                    f"{order.quantity} @ {order.entry_price:.2f} "
-                    f"(algo: {order.routing_algo})"
+                    f"    - {commodity}: {suggestion.direction.value.upper()} target {suggestion.target_quantity} @ {suggestion.reference_price:.2f} for ${suggestion.target_notional:,.0f}"
                 )
-
-            # Show order routing details
-            print("\n  Order Routing Details:")
-            for commodity, order in orders.items():
-                print(f"    {commodity}:")
-                print(f"      Order ID: {order.order_id}")
-                print(f"      Signal Strength: {order.signal_score:.3f}")
-                print(f"      Confidence: {order.signal_confidence:.3f}")
-                print(f"      Stop Loss: {order.stop_loss:.2f}")
-                print(f"      Take Profit: {order.take_profit:.2f}")
-
-            # Get execution metrics
-            metrics = execution_engine.get_execution_metrics()
-            print(f"\n  Execution Metrics:")
-            print(f"    Total Notional: ${metrics.turnover_notional:,.0f}")
-            print(f"    Orders by Side: {metrics.positions_by_side}")
-            print(f"    Algos Used: {metrics.orders_by_algo}")
-
-        except Exception as e:
-            print(f"  ✗ Execution layer: {e}")
-
-    results["components"]["execution"] = {
-        "orders_generated": len(orders),
-        "orders": {k: v.to_dict() for k, v in orders.items()},
+            metrics = suggestion_engine.get_metrics()
+            print("\n  Suggestion Metrics:")
+            print(f"    Total Target Notional: ${metrics.total_target_notional:,.0f}")
+            print(f"    Direction Mix: {metrics.directions}")
+        except Exception as exc:
+            print(f"  ✗ Position suggestion layer: {exc}")
+    results["components"]["position_suggestions"] = {
+        "suggestions_generated": len(position_suggestions),
+        "suggestions": {
+            commodity: suggestion.to_dict()
+            for commodity, suggestion in position_suggestions.items()
+        },
     }
 
-    # ============================================================================
-    # FINAL SUMMARY
-    # ============================================================================
     print("\n" + "=" * 80)
     print("PIPELINE COMPLETE")
     print("=" * 80)
     print(f"\nGenerated: {datetime.now().isoformat()}")
     print(f"Commodities: {', '.join(test_commodities)}")
-    print(f"Orders Ready for Review: {len(orders)}")
-    print(f"\nNext Steps:")
-    print("  1. Review order recommendations (see execution orders above)")
+    print(f"Suggestions Ready for Review: {len(position_suggestions)}")
+    print("\nNext Steps:")
+    print("  1. Review position suggestions against your discretionary workflow")
     print("  2. Validate risk constraints (position limits, sector exposure)")
-    print("  3. Place orders via broker API (user's responsibility)")
-    print("  4. Monitor executions via order_audit")
-    print("  5. Refresh factor metrics daily via live_scheduler")
+    print("  3. Execute independently outside this engine if you choose to trade")
+    print("  4. Refresh factor metrics daily via live_scheduler")
 
-    # Persist results
     try:
         storage.write_json(
-            settings.storage.reports,
+            settings.storage.report_store,
             f"end_to_end_demo_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             results,
         )
-        print(f"\n✓ Results persisted to {settings.storage.reports}/")
-    except Exception as e:
-        print(f"\nWarning: Could not persist results: {e}")
+        print(f"\n✓ Results persisted to {settings.storage.report_store}/")
+    except Exception as exc:
+        print(f"\nWarning: Could not persist results: {exc}")
 
     return results
 
 
 if __name__ == "__main__":
-    # Run full demo
-    results = run_end_to_end_demo(
+    run_end_to_end_demo(
         test_commodities=["CRUDEOIL", "GOLD", "COPPER"],
-        include_backtester=True,  # Slow but shows factor accumulation
+        include_backtester=True,
         include_intraday=True,
         include_inter_market=True,
-        include_execution=True,
+        include_position_suggestions=True,
     )
 
-    print("\n✓ Demo complete. Order recommendations available for review.")
+    print("\n✓ Demo complete. Position suggestions available for review.")

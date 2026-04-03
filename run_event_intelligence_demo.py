@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import importlib
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
@@ -39,35 +39,35 @@ def main() -> None:
     text_inputs = [
         {
             "source_id": "supply_1",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "headline": "Major pipeline outage triggers severe supply disruption in crude exports",
             "body": "Officials confirm disruption expected for weeks",
             "source": "demo_wire",
         },
         {
             "source_id": "rates_1",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "headline": "Central bank signals hawkish rate hike trajectory",
             "body": "Dollar strengthens as policy guidance tightens",
             "source": "demo_wire",
         },
         {
             "source_id": "inv_1",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "headline": "Weekly inventory drawdown reported across key storage hubs",
             "body": "Stocks fell sharply versus expectations",
             "source": "demo_wire",
         },
         {
             "source_id": "weather_1",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "headline": "Severe drought risk threatens crop outlook in major producing regions",
             "body": "Monsoon deficit raises yield uncertainty",
             "source": "demo_wire",
         },
         {
             "source_id": "opec_1",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "headline": "OPEC commentary points to structural production discipline",
             "body": "Guidance suggests medium-term supply restraint",
             "source": "demo_wire",

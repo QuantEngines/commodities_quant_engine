@@ -4,7 +4,7 @@ import pandas as pd
 
 from ..analytics.adaptation import AdaptiveParameterEngine
 from ..analytics.backtest import MacroBacktester
-from ..analytics.execution import slippage_rate
+from ..analytics.evaluation_pricing import slippage_rate
 from ..data.quality_checks import MarketDataValidator
 from ..data.storage.local import LocalStorage
 
@@ -28,10 +28,10 @@ def test_vol_target_sizing_scales_with_realized_vol(tmp_path, monkeypatch):
     storage = LocalStorage(str(tmp_path))
     backtester = MacroBacktester(storage=storage)
 
-    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.execution.target_annualized_vol", 0.20)
-    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.execution.annualization_days", 252)
-    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.execution.max_abs_position", 1.0)
-    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.execution.min_trade_confidence", 0.0)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.evaluation_pricing.target_annualized_vol", 0.20)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.evaluation_pricing.annualization_days", 252)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.evaluation_pricing.max_abs_position", 1.0)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.evaluation_pricing.min_trade_confidence", 0.0)
 
     signal = SimpleNamespace(preferred_direction="long", confidence_score=0.7)
     low_vol_position = backtester._signal_to_position(signal, realized_vol=0.005)
@@ -42,7 +42,7 @@ def test_vol_target_sizing_scales_with_realized_vol(tmp_path, monkeypatch):
     assert abs(high_vol_position) <= 1.0
 
 
-def test_execution_slippage_increases_with_participation():
+def test_evaluation_pricing_slippage_increases_with_participation():
     row = pd.Series({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 1200.0})
     base = slippage_rate(row, phase="entry", median_volume=1200.0, participation=0.0)
     higher = slippage_rate(row, phase="entry", median_volume=1200.0, participation=1.0)

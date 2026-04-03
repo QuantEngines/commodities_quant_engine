@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 import numpy as np
@@ -9,6 +9,7 @@ import pandas as pd
 from ..config.settings import settings
 from ..data.models import RegimeState
 from ..features.base import MomentumFeatures, VolatilityFeatures
+from .hmm_regime import HMMRegimeClassifier
 
 
 class RegimeEngine:
@@ -18,14 +19,28 @@ class RegimeEngine:
         self.vol_engine = VolatilityFeatures()
         self.mom_engine = MomentumFeatures()
         self.window = settings.signal.regime_window_days
+        self.hmm_classifier = HMMRegimeClassifier()
 
     def detect_regime(self, data: pd.DataFrame, commodity: str) -> RegimeState:
         subset = data.tail(self.window)
         feature_frame = self._build_feature_frame(subset)
+        model_choice = str(settings.signal.regime_model).lower().strip()
+        if model_choice == "hmm":
+            hmm_result = self.hmm_classifier.classify(feature_frame)
+            if hmm_result is not None:
+                return RegimeState(
+                    label=hmm_result.label,
+                    probability=hmm_result.probability,
+                    confidence=hmm_result.confidence,
+                    features=hmm_result.features,
+                    timestamp=subset.index[-1].to_pydatetime()
+                    if isinstance(subset.index, pd.DatetimeIndex)
+                    else datetime.now(timezone.utc).replace(tzinfo=None),
+                )
         return self.detect_regime_from_features(
             feature_frame.iloc[-1].to_dict(),
             commodity=commodity,
-            timestamp=subset.index[-1].to_pydatetime() if isinstance(subset.index, pd.DatetimeIndex) else datetime.utcnow(),
+            timestamp=subset.index[-1].to_pydatetime() if isinstance(subset.index, pd.DatetimeIndex) else datetime.now(timezone.utc).replace(tzinfo=None),
         )
 
     def detect_regime_from_features(
@@ -64,7 +79,7 @@ class RegimeEngine:
                 "momentum_20d": current_mom,
                 "trend_strength_20d": trend_strength,
             },
-            timestamp=timestamp or datetime.utcnow(),
+            timestamp=timestamp or datetime.now(timezone.utc).replace(tzinfo=None),
         )
 
     def _build_feature_frame(self, data: pd.DataFrame) -> pd.DataFrame:

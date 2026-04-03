@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from ...analytics.adaptation import AdaptiveParameterEngine
-from ...analytics.execution import execution_price
+from ...analytics.evaluation_pricing import evaluation_price
 from ...analytics.evaluation import SignalEvaluationEngine
 from ...config.settings import settings
 from ...data.ingestion import market_data_service
@@ -62,7 +62,7 @@ class MacroBacktester:
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.evaluation_engine = SignalEvaluationEngine(storage=self.storage)
         self.adaptation_engine = AdaptiveParameterEngine(storage=self.storage)
-        self.transaction_costs = float(settings.execution.turnover_cost_bps) / 10000.0
+        self.transaction_costs = float(settings.evaluation_pricing.turnover_cost_bps) / 10000.0
 
     def run_backtest(
         self,
@@ -208,7 +208,7 @@ class MacroBacktester:
         closes = price_data["close"].astype(float)
         opens = price_data["open"].astype(float) if "open" in price_data.columns else closes
         rolling_median_volume = price_data["volume"].rolling(20, min_periods=5).median() if "volume" in price_data.columns else pd.Series(index=price_data.index, dtype=float)
-        rolling_vol = closes.pct_change().rolling(settings.execution.vol_target_window_bars, min_periods=5).std(ddof=0)
+        rolling_vol = closes.pct_change().rolling(settings.evaluation_pricing.vol_target_window_bars, min_periods=5).std(ddof=0)
         signal_map = {pd.Timestamp(signal.timestamp): signal for signal in signals}
         current_position = 0.0
         pending_signal: Optional[Suggestion] = None
@@ -230,7 +230,7 @@ class MacroBacktester:
                 current_open = float(opens.iloc[idx])
                 if prior_position != 0.0:
                     prior_direction = "long" if prior_position > 0 else "short"
-                    exit_exec = execution_price(
+                    exit_exec = evaluation_price(
                         row,
                         prior_direction,
                         phase="exit",
@@ -244,7 +244,7 @@ class MacroBacktester:
                     day_return += abs(prior_position) * exit_adjustment
                 current_position = target_position
                 if current_position != 0.0:
-                    entry_exec = execution_price(
+                    entry_exec = evaluation_price(
                         row,
                         pending_signal.preferred_direction,
                         phase="entry",
@@ -272,7 +272,7 @@ class MacroBacktester:
         return pd.Series(portfolio_returns, index=price_data.index)
 
     def _signal_to_position(self, signal: Suggestion, realized_vol: Optional[float] = None) -> float:
-        if signal.confidence_score < settings.execution.min_trade_confidence:
+        if signal.confidence_score < settings.evaluation_pricing.min_trade_confidence:
             return 0.0
 
         direction = 0.0
@@ -283,14 +283,14 @@ class MacroBacktester:
         if direction == 0.0:
             return 0.0
 
-        annualization = max(1, int(settings.execution.annualization_days))
-        target_daily_vol = float(settings.execution.target_annualized_vol) / np.sqrt(annualization)
+        annualization = max(1, int(settings.evaluation_pricing.annualization_days))
+        target_daily_vol = float(settings.evaluation_pricing.target_annualized_vol) / np.sqrt(annualization)
         vol_scalar = 1.0
         if realized_vol is not None and realized_vol > 0:
             vol_scalar = target_daily_vol / float(realized_vol)
 
         raw_position = direction * float(signal.confidence_score) * vol_scalar
-        max_abs_position = float(settings.execution.max_abs_position)
+        max_abs_position = float(settings.evaluation_pricing.max_abs_position)
         return float(np.clip(raw_position, -max_abs_position, max_abs_position))
 
     def _calculate_performance_metrics(
@@ -303,7 +303,7 @@ class MacroBacktester:
     ) -> BacktestResult:
         cumulative = (1.0 + portfolio_returns).cumprod()
         total_return = float(cumulative.iloc[-1] - 1.0) if len(cumulative) else 0.0
-        annualization = max(1, int(settings.execution.annualization_days))
+        annualization = max(1, int(settings.evaluation_pricing.annualization_days))
         annualized_return = float((1.0 + total_return) ** (annualization / max(len(portfolio_returns), 1)) - 1.0) if len(portfolio_returns) else 0.0
         volatility = float(portfolio_returns.std(ddof=0) * np.sqrt(annualization)) if len(portfolio_returns) else 0.0
         sharpe_ratio = annualized_return / volatility if volatility else 0.0

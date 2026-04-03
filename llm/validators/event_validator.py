@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Sequence
 
 from ...nlp.schemas import CommodityEvent
@@ -10,7 +10,7 @@ def normalize_event_dict(payload: Dict[str, Any], commodity_scope: Sequence[str]
     normalized = dict(payload)
     normalized.setdefault("commodity_scope", list(commodity_scope))
     normalized.setdefault("source_id", source_id)
-    normalized.setdefault("timestamp", datetime.utcnow())
+    normalized.setdefault("timestamp", datetime.now(timezone.utc).replace(tzinfo=None))
     normalized.setdefault("raw_text", raw_text)
     normalized.setdefault("summary", "normalized_llm_event")
     normalized.setdefault("entities_keywords", [])

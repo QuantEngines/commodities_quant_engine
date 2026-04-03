@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -54,7 +54,7 @@ class DirectionalAlphaEngine:
     def predict(self, data: pd.DataFrame, commodity: str) -> List[DirectionalSignal]:
         feature_frame = self.build_feature_frame(data)
         latest_features = feature_frame.iloc[-1].to_dict()
-        timestamp = data.index[-1].to_pydatetime() if isinstance(data.index, pd.DatetimeIndex) else datetime.utcnow()
+        timestamp = data.index[-1].to_pydatetime() if isinstance(data.index, pd.DatetimeIndex) else datetime.now(timezone.utc).replace(tzinfo=None)
         return [
             self.generate_signal(commodity, latest_features, timestamp, horizon)
             for horizon in self.horizons

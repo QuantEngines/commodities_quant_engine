@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable, List, Mapping, Union
 
 
@@ -21,7 +21,7 @@ def _from_mapping(item: Mapping[str, object], idx: int) -> TextRecord:
     elif isinstance(ts, str):
         timestamp = datetime.fromisoformat(ts)
     else:
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
     return TextRecord(
         source_id=str(item.get("source_id", f"record_{idx}")),
         timestamp=timestamp,
@@ -41,7 +41,7 @@ def normalize_text_records(items: Iterable[Union[str, Mapping[str, object], Text
             records.append(
                 TextRecord(
                     source_id=f"record_{idx}",
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
                     headline=item.strip(),
                     body="",
                     source="raw_text",

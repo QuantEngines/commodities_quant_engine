@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, List
 
@@ -83,7 +83,7 @@ class CommodityEvent(BaseModel):
     summary: str = ""
     entities_keywords: List[str] = Field(default_factory=list)
     source_id: str = ""
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     raw_text: str = ""
 
     @field_validator("confidence", "event_strength", "uncertainty_score", "regime_relevance")

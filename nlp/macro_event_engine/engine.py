@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Set, Tuple, Union
 
-from ...llm.extraction import LLMExtractionAdapter
+from ...config.settings import settings
+from ...llm.extraction import LLMExtractionAdapter, LLMInferenceClient
 from ..extraction import RuleBasedEventExtractor
 from ..ingestion import TextRecord, normalize_text_records
 from ..preprocessing import standardize_text
@@ -26,6 +27,7 @@ class EventIntelligenceEngine:
     def __init__(self):
         self.rule_extractor = RuleBasedEventExtractor()
         self.llm_adapter = LLMExtractionAdapter()
+        self.llm_client = LLMInferenceClient()
 
     def process_texts(
         self,
@@ -47,8 +49,16 @@ class EventIntelligenceEngine:
                 source=record.source,
             )
             raw_text = f"{payload.headline} {payload.body}".strip()
+            llm_json = llm_json_by_source_id.get(record.source_id)
+            if llm_json is None and settings.nlp_event.use_llm_extraction:
+                llm_json = self.llm_client.generate_event_json(
+                    raw_text=raw_text,
+                    commodity_scope=commodity_scope,
+                    source_id=record.source_id,
+                )
+
             event = self.llm_adapter.parse_or_none(
-                llm_json=llm_json_by_source_id.get(record.source_id),
+                llm_json=llm_json,
                 commodity_scope=commodity_scope,
                 source_id=record.source_id,
                 raw_text=raw_text,

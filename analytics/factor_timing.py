@@ -11,7 +11,7 @@ waiting for full parameter reoptimization cycles.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np

@@ -99,8 +99,8 @@ class EconomicSeriesIngestion:
     def _load_from_cache(self, cache_key: str) -> Optional[List[MacroSeries]]:
         """Load series data from cache."""
         try:
-            df = storage.load_dataframe(cache_key, "macro_cache")
-            if df is not None and not df.empty:
+            df = storage.load_domain_dataframe("macro_cache", cache_key)
+            if not df.empty:
                 return [MacroSeries(**row) for _, row in df.iterrows()]
         except Exception:
             pass
@@ -112,7 +112,7 @@ class EconomicSeriesIngestion:
             return
 
         df = pd.DataFrame([s.__dict__ for s in series_list])
-        storage.save_dataframe(df, cache_key, "macro_cache")
+        storage.append_dataframe(df, "macro_cache", cache_key)
 
     def get_available_series(self) -> List[str]:
         """Get list of available series across all sources."""

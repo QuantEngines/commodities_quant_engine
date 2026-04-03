@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 
-from ...analytics.execution import direction_to_sign, execution_price, slippage_rate
+from ...analytics.evaluation_pricing import direction_to_sign, evaluation_price, slippage_rate
 from ...config.settings import settings
 from ...data.models import EvaluationArtifact, MacroEvent, SignalEvaluationRecord, SignalSnapshot
 from ...data.storage.local import LocalStorage
@@ -152,7 +152,7 @@ class SignalEvaluationEngine:
                 exit_ts = price_data.index[exit_idx].to_pydatetime()
                 if exit_ts > as_of_timestamp:
                     continue
-                raw_return, signed_return, path_returns, execution_metadata = self._forward_return_path(price_data, entry_idx, exit_idx, snapshot.direction, rolling_median_volume)
+                raw_return, signed_return, path_returns, pricing_metadata = self._forward_return_path(price_data, entry_idx, exit_idx, snapshot.direction, rolling_median_volume)
                 actual_direction = self._direction_bucket(raw_return)
                 direction_correct = actual_direction == snapshot.direction
                 realized_regime = self._realized_regime(raw_return, returns.iloc[entry_idx + 1 : exit_idx + 1])
@@ -182,7 +182,7 @@ class SignalEvaluationEngine:
                         "suggested_horizon": snapshot.suggested_horizon,
                         "signal_category": snapshot.signal_category,
                         "model_version": snapshot.model_version,
-                        **execution_metadata,
+                        **pricing_metadata,
                     },
                 )
                 records.append(record)
@@ -293,8 +293,8 @@ class SignalEvaluationEngine:
         exit_row = price_data.iloc[exit_idx]
         entry_median_volume = float(rolling_median_volume.iloc[entry_idx]) if len(rolling_median_volume) > entry_idx and pd.notna(rolling_median_volume.iloc[entry_idx]) else None
         exit_median_volume = float(rolling_median_volume.iloc[exit_idx]) if len(rolling_median_volume) > exit_idx and pd.notna(rolling_median_volume.iloc[exit_idx]) else None
-        entry_price = execution_price(entry_row, direction=direction, phase="entry", median_volume=entry_median_volume)
-        exit_price = execution_price(exit_row, direction=direction, phase="exit", median_volume=exit_median_volume)
+        entry_price = evaluation_price(entry_row, direction=direction, phase="entry", median_volume=entry_median_volume)
+        exit_price = evaluation_price(exit_row, direction=direction, phase="exit", median_volume=exit_median_volume)
         raw_return = float(exit_price / entry_price - 1.0)
         direction_sign = direction_to_sign(direction)
         signed_return = raw_return * direction_sign
@@ -304,8 +304,8 @@ class SignalEvaluationEngine:
             "exit_timestamp": price_data.index[exit_idx].isoformat(),
             "entry_price": float(entry_price),
             "exit_price": float(exit_price),
-            "entry_price_field": settings.execution.entry_price_field,
-            "exit_price_field": settings.execution.exit_price_field,
+            "entry_price_field": settings.evaluation_pricing.entry_price_field,
+            "exit_price_field": settings.evaluation_pricing.exit_price_field,
             "entry_slippage_bps_realized": float(slippage_rate(entry_row, phase="entry", median_volume=entry_median_volume) * 10000.0),
             "exit_slippage_bps_realized": float(slippage_rate(exit_row, phase="exit", median_volume=exit_median_volume) * 10000.0),
         }

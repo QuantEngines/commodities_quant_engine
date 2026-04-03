@@ -1,4 +1,5 @@
 import requests
+import numpy as np
 import pandas as pd
 from typing import List, Dict, Optional, Any
 from datetime import datetime, date, timedelta

@@ -7,7 +7,7 @@ import pandas as pd
 from ..config.settings import settings
 
 
-ExecutionPhase = Literal["entry", "exit"]
+EvaluationPhase = Literal["entry", "exit"]
 
 
 def direction_to_sign(direction: str) -> float:
@@ -25,16 +25,16 @@ def resolve_price(row: pd.Series, field: str) -> float:
     fallback = row.get("close")
     if pd.notna(fallback):
         return float(fallback)
-    raise ValueError(f"Execution price field '{field}' is unavailable for this bar.")
+    raise ValueError(f"Evaluation price field '{field}' is unavailable for this bar.")
 
 
 def slippage_rate(
     row: pd.Series,
-    phase: ExecutionPhase,
+    phase: EvaluationPhase,
     median_volume: float | None = None,
     participation: float = 0.0,
 ) -> float:
-    config = settings.execution
+    config = settings.evaluation_pricing
     base_bps = config.entry_slippage_bps if phase == "entry" else config.exit_slippage_bps
     spread_bps = config.entry_spread_bps if phase == "entry" else config.exit_spread_bps
     reference_field = config.entry_price_field if phase == "entry" else config.exit_price_field
@@ -53,20 +53,33 @@ def slippage_rate(
     return (base_rate + capped_range_component) * liquidity_multiplier
 
 
-def execution_price(
+def evaluation_price(
     row: pd.Series,
     direction: str,
-    phase: ExecutionPhase,
+    phase: EvaluationPhase,
     median_volume: float | None = None,
     participation: float = 0.0,
 ) -> float:
     if direction == "neutral":
-        reference_field = settings.execution.entry_price_field if phase == "entry" else settings.execution.exit_price_field
+        reference_field = (
+            settings.evaluation_pricing.entry_price_field
+            if phase == "entry"
+            else settings.evaluation_pricing.exit_price_field
+        )
         return resolve_price(row, reference_field)
 
-    reference_field = settings.execution.entry_price_field if phase == "entry" else settings.execution.exit_price_field
+    reference_field = (
+        settings.evaluation_pricing.entry_price_field
+        if phase == "entry"
+        else settings.evaluation_pricing.exit_price_field
+    )
     reference_price = resolve_price(row, reference_field)
-    rate = slippage_rate(row, phase=phase, median_volume=median_volume, participation=participation)
+    rate = slippage_rate(
+        row,
+        phase=phase,
+        median_volume=median_volume,
+        participation=participation,
+    )
 
     is_buy = (phase == "entry" and direction == "long") or (phase == "exit" and direction == "short")
     if is_buy:

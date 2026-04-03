@@ -144,6 +144,10 @@ class SignalSettings(BaseModel):
     max_directional_score_abs: float = 2.5
     structural_prior_blend: float = 0.20
     regime_window_days: int = 252
+    regime_model: str = "rule_based"
+    hmm_states: int = 4
+    hmm_min_history_rows: int = 120
+    hmm_transition_blend: float = 0.40
     inefficiency_window_days: int = 20
     inefficiency_z_threshold: float = 2.0
     max_staleness_days: int = 3
@@ -236,7 +240,7 @@ class ContractMasterSettings(BaseModel):
     fallback_expiry_days: int = 30
 
 
-class ExecutionSettings(BaseModel):
+class EvaluationPricingSettings(BaseModel):
     entry_price_field: str = "open"
     exit_price_field: str = "close"
     entry_slippage_bps: float = 3.0
@@ -257,6 +261,7 @@ class ExecutionSettings(BaseModel):
 
 class StorageSettings(BaseModel):
     base_dir: str = "artifacts"
+    market_data_store: str = "market_data"
     signal_store: str = "signals"
     evaluation_store: str = "evaluations"
     parameter_store: str = "parameters"
@@ -286,7 +291,7 @@ class Settings(BaseSettings):
     evaluation: EvaluationSettings = Field(default_factory=EvaluationSettings)
     adaptation: AdaptationSettings = Field(default_factory=AdaptationSettings)
     contract_master: ContractMasterSettings = Field(default_factory=ContractMasterSettings)
-    execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
+    evaluation_pricing: EvaluationPricingSettings = Field(default_factory=EvaluationPricingSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     data_dir: str = "data"
     cache_dir: str = "cache"
@@ -323,6 +328,18 @@ if not settings.data_sources:
                 "api_key": "${ZERODHA_API_KEY}",  # Set via .env or environment
                 "api_secret": "${ZERODHA_API_SECRET}",  # Set via .env or environment
                 "access_token": "${ZERODHA_ACCESS_TOKEN}",  # Set via .env or environment
+                "fallback_enabled": True,
+            },
+        ),
+        "ICICI_BREEZE": DataSourceConfig(
+            name="ICICI_BREEZE",
+            base_url=None,
+            config={
+                "api_key": "${ICICI_BREEZE_API_KEY}",
+                "secret_key": "${ICICI_BREEZE_SECRET_KEY}",
+                "session_token": "${ICICI_BREEZE_SESSION_TOKEN}",
+                "exchange_code": "MCX",
+                "product_type": "futures",
                 "fallback_enabled": True,
             },
         ),

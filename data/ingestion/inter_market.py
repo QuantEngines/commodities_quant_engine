@@ -18,7 +18,7 @@ import pandas as pd
 
 from .base import DataSource
 from .local_first import LocalFirstDataSource
-from ..data.models import Contract, OHLCV
+from ..models import Contract, OHLCV
 
 
 class COMEXDataSource(LocalFirstDataSource):

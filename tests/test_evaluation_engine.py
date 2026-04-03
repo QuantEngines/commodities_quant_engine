@@ -86,12 +86,12 @@ def test_evaluation_engine_uses_next_bar_entry_by_default(tmp_path, monkeypatch)
     engine = SignalEvaluationEngine(storage=storage)
     price_data = make_uptrend_frame()
     snapshot = make_snapshot("sig-long", price_data.index[5].to_pydatetime(), "long")
-    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.execution.entry_slippage_bps", 0.0)
-    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.execution.exit_slippage_bps", 0.0)
-    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.execution.entry_spread_bps", 0.0)
-    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.execution.exit_spread_bps", 0.0)
-    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.execution.impact_coefficient_bps", 0.0)
-    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.execution.max_slippage_from_range_fraction", 0.0)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.evaluation_pricing.entry_slippage_bps", 0.0)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.evaluation_pricing.exit_slippage_bps", 0.0)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.evaluation_pricing.entry_spread_bps", 0.0)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.evaluation_pricing.exit_spread_bps", 0.0)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.evaluation_pricing.impact_coefficient_bps", 0.0)
+    monkeypatch.setattr("commodities_quant_engine.config.settings.settings.evaluation_pricing.max_slippage_from_range_fraction", 0.0)
 
     records = engine._build_evaluation_records(
         price_data=price_data,

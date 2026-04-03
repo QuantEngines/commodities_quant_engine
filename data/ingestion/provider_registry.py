@@ -6,6 +6,7 @@ from ...config.settings import settings
 from .base import DataSource
 from .commodities_api import CommoditiesAPIDataSource
 from .fbil import FBILDataSource
+from .icici_breeze import ICICIBreezeDataSource
 from .imd import IMDDataSource
 from .mcx import MCXDataSource
 from .mospi import MOSPIDataSource
@@ -21,6 +22,7 @@ class ProviderRegistry:
     def __init__(self):
         self.providers: Dict[str, DataSource] = {
             "ZERODHA": ZerodhaKiteConnectDataSource(self._provider_config("ZERODHA")),
+            "ICICI_BREEZE": ICICIBreezeDataSource(self._provider_config("ICICI_BREEZE")),
             "MCX": MCXDataSource(self._provider_config("MCX")),
             "COMMODITIES_API": CommoditiesAPIDataSource(self._provider_config("COMMODITIES_API")),
             "NCDEX": NCDEXDataSource(self._provider_config("NCDEX")),

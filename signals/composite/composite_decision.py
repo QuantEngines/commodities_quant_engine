@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
@@ -383,7 +383,7 @@ class CompositeDecisionEngine:
     def _infer_timestamp(self, data: pd.DataFrame) -> datetime:
         if isinstance(data.index, pd.DatetimeIndex):
             return data.index[-1].to_pydatetime()
-        return datetime.utcnow()
+        return datetime.now(timezone.utc).replace(tzinfo=None)
 
     def _determine_direction(self, directional_scores: Dict[int, float]) -> str:
         weighted_score = self._weighted_directional_score(directional_scores)

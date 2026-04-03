@@ -17,5 +17,5 @@ def test_signal_and_adaptation_defaults():
     assert settings.adaptation.min_sample_size >= 40
     assert settings.storage.signal_store == "signals"
     assert "CRUDEOILM" in settings.macro.commodity_sensitivities
-    assert settings.execution.entry_price_field == "open"
+    assert settings.evaluation_pricing.entry_price_field == "open"
     assert settings.contract_master.fallback_expiry_days >= 30

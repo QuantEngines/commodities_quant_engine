@@ -11,15 +11,15 @@ Prevents whipsaw: Intraday signals respect daily regime bias, don't flip contra-
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
-from ..config.settings import settings
-from ..data.models import DirectionalSignal
-from ..signals.directional.directional_alpha import DirectionalAlphaEngine
+from ...config.settings import settings
+from ...data.models import DirectionalSignal
+from ..directional.directional_alpha import DirectionalAlphaEngine
 
 
 class IntradayFeatureWindows:
@@ -51,6 +51,7 @@ class IntradayDirectionalAlpha:
 
     def compute_intraday_signal(
         self,
+        commodity: str,
         intraday_data: pd.DataFrame,
         daily_regime: str,
         daily_factor_weights: Dict[str, float],
@@ -91,7 +92,7 @@ class IntradayDirectionalAlpha:
         confidence = 0.6 + (abs(momentum) * 0.3)  # Range [0.6, 0.9]
 
         return DirectionalSignal(
-            commodity="",  # Will be filled by caller
+            commodity=commodity,
             horizon=1 if interval == "1H" else 4,  # Intraday horizon
             score=intraday_score,
             confidence=confidence,
@@ -175,6 +176,7 @@ class IntradayFactorRotationEngine:
 
         # Compute intraday alpha
         intraday_signal = self.intraday_alpha.compute_intraday_signal(
+            commodity=commodity,
             intraday_data=intraday_price_data,
             daily_regime=daily_regime,
             daily_factor_weights=factor_weights,
@@ -228,13 +230,21 @@ class IntradayFactorRotationEngine:
         - Intraday score must align with daily regime
         - Combined score above threshold
         """
-        if daily_regime == "neutral":
+        regime = str(daily_regime).lower()
+        if "bullish" in regime:
+            regime = "bullish"
+        elif "bearish" in regime:
+            regime = "bearish"
+        elif "neutral" in regime or "rangebound" in regime:
+            regime = "neutral"
+
+        if regime == "neutral":
             return "hold"  # No clear regime bias
 
         if combined < 0.05:
             return "hold"  # Combined signal too weak
 
-        if daily_regime == "bullish":
+        if regime == "bullish":
             if intraday_score > 0.1:
                 return "long"
             elif intraday_score < -0.3:
@@ -242,7 +252,7 @@ class IntradayFactorRotationEngine:
             else:
                 return "hold|long"  # Weak long
 
-        elif daily_regime == "bearish":
+        elif regime == "bearish":
             if intraday_score < -0.1:
                 return "short"
             elif intraday_score > 0.3:

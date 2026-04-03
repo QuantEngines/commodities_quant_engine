@@ -197,14 +197,24 @@ class LiveFactorScheduler:
         self, commodity: str, lookback_days: int = 90
     ) -> Optional[pd.DataFrame]:
         """
-        Load recent price data for backtesting.
+        Load recent price data for backtesting via MarketDataService.
 
-        In production, this would load from market data API.
-        For now, returns None (caller should provide).
+        Falls back to None when no live or cached data is available.
         """
-        # TODO: Integrate with MarketDataService to load prices
-        # from Zerodha KiteConnect or local files
-        return None
+        try:
+            from ..data.ingestion.market_data_service import MarketDataService
+            svc = MarketDataService(storage=self.storage)
+            end_date = datetime.now().date()
+            start_date = end_date - timedelta(days=lookback_days)
+            return svc.load_or_fetch_price_frame(
+                commodity=commodity,
+                start_date=start_date,
+                end_date=end_date,
+                refresh=False,
+            )
+        except Exception as e:
+            logger.debug(f"Could not load price data for {commodity}: {e}")
+            return None
 
     def get_refresh_status(self) -> Dict:
         """Get current scheduler status and last refresh info."""

@@ -294,7 +294,7 @@ def format_summary(results: Dict[str, Any]) -> str:
             f"| confidence={suggestion.confidence_score:.2f} | score={suggestion.composite_score:.2f}"
         ),
         (
-            f"Execution: entry={suggestion.suggested_entry_style} | horizon={suggestion.suggested_holding_horizon}D "
+            f"Positioning: entry_style={suggestion.suggested_entry_style} | horizon={suggestion.suggested_holding_horizon}D "
             f"| data_quality={suggestion.data_quality_flag}"
         ),
         (

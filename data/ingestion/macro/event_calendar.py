@@ -131,8 +131,8 @@ class EventCalendarIngestion:
     def _load_from_cache(self, cache_key: str) -> Optional[List[MacroEvent]]:
         """Load event data from cache."""
         try:
-            df = storage.load_dataframe(cache_key, "event_cache")
-            if df is not None and not df.empty:
+            df = storage.load_domain_dataframe("event_cache", cache_key)
+            if not df.empty:
                 return [MacroEvent(**row) for _, row in df.iterrows()]
         except Exception:
             pass
@@ -144,7 +144,7 @@ class EventCalendarIngestion:
             return
 
         df = pd.DataFrame([e.__dict__ for e in events])
-        storage.save_dataframe(df, cache_key, "event_cache")
+        storage.append_dataframe(df, "event_cache", cache_key)
 
     def get_event_risk_windows(self, events: List[MacroEvent], risk_window_days: int = 3) -> List[Dict[str, Any]]:
         """Calculate risk windows around high-impact events."""

@@ -66,7 +66,7 @@ class ShippingFeaturePipeline:
         feature_frame = feature_frame.loc[:, ~feature_frame.columns.duplicated()]
         momentum = self.shipping_momentum.compute(feature_frame)
         feature_frame = feature_frame.join(momentum, how="outer").join(quality.set_index("window_start"), how="outer")
-        feature_frame = feature_frame.fillna(0.0).sort_index()
+        feature_frame = feature_frame.apply(pd.to_numeric, errors="coerce").fillna(0.0).sort_index()
 
         observation_start = pd.to_datetime(positions["timestamp"]).min().to_pydatetime()
         as_of = as_of_timestamp or pd.to_datetime(positions["timestamp"]).max().to_pydatetime()

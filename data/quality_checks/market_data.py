@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
@@ -33,7 +33,7 @@ class MarketDataValidator:
                 flag="incomplete",
                 issues=["No market data supplied."],
                 stats=stats,
-                as_of=as_of or datetime.utcnow(),
+                as_of=as_of or datetime.now(timezone.utc).replace(tzinfo=None),
                 is_valid=False,
             )
 
@@ -112,6 +112,6 @@ class MarketDataValidator:
             flag=flag,
             issues=issues,
             stats=stats,
-            as_of=as_of or (data.index[-1].to_pydatetime() if isinstance(data.index, pd.DatetimeIndex) else datetime.utcnow()),
+            as_of=as_of or (data.index[-1].to_pydatetime() if isinstance(data.index, pd.DatetimeIndex) else datetime.now(timezone.utc).replace(tzinfo=None)),
             is_valid=is_valid,
         )

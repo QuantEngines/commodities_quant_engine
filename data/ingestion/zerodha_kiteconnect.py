@@ -10,6 +10,7 @@ Prerequisites:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +20,15 @@ from ..models import Contract, OHLCV
 from .base import DataSource
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_secret(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    token = str(value).strip()
+    if token.startswith("${") and token.endswith("}"):
+        return os.getenv(token[2:-1], "").strip()
+    return token
 
 
 class ZerodhaKiteConnectDataSource(DataSource):
@@ -34,9 +44,9 @@ class ZerodhaKiteConnectDataSource(DataSource):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self.api_key = config.get("api_key", "")
-        self.api_secret = config.get("api_secret", "")
-        self.access_token = config.get("access_token", "")
+        self.api_key = _resolve_secret(config.get("api_key", ""))
+        self.api_secret = _resolve_secret(config.get("api_secret", ""))
+        self.access_token = _resolve_secret(config.get("access_token", ""))
         self.fallback_enabled = config.get("fallback_enabled", True)
         self.kite = None
         self.enabled = bool(self.api_key and self.api_secret and self.access_token)

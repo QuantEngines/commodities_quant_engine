@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from ..analytics.evaluation import SignalEvaluationEngine
 from ..analytics.factor_timing import FactorTimingEngine
 from ..config.settings import settings
 from ..data.storage.local import LocalStorage
@@ -75,6 +76,7 @@ class HistoricalBacktester:
     def __init__(self, storage: Optional[LocalStorage] = None):
         self.storage = storage or LocalStorage()
         self.factor_timing_engine = FactorTimingEngine(storage=storage)
+        self._eval_engine = SignalEvaluationEngine(storage=self.storage)
 
     def backtest_commodity_historical(
         self,
@@ -192,13 +194,25 @@ class HistoricalBacktester:
         return results
 
     def _load_commodity_snapshots(self, commodity: str) -> List[Dict]:
-        """Load signal snapshots from storage (evaluation store)."""
+        """Load signal snapshots from the evaluation store via SignalEvaluationEngine."""
         try:
-            # This would load from settings.storage.evaluation_store
-            # For now, placeholder
-            return []
+            snapshots = self._eval_engine.load_signal_snapshots(commodity)
+            return [
+                {
+                    "signal_id": s.signal_id,
+                    "timestamp": s.timestamp,
+                    "regime_label": s.regime_label,
+                    "directional_scores": s.directional_scores,
+                    "inefficiency_score": s.inefficiency_score,
+                    "composite_score": s.composite_score,
+                    "component_scores": s.component_scores,
+                    "direction": s.direction,
+                    "conviction": s.conviction,
+                }
+                for s in snapshots
+            ]
         except Exception as e:
-            logger.debug(f"Could not load snapshots: {e}")
+            logger.debug(f"Could not load snapshots for {commodity}: {e}")
             return []
 
     def _extract_factor_scores(self, snapshot: Dict) -> Dict[str, float]:

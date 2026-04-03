@@ -448,9 +448,9 @@ The `COMMODITIES_API` path is intentionally opt-in. It is useful for reference/s
 
 Live-mode observations are stored efficiently as compressed JSONL files, rotated by commodity and day. This is intentionally different from the slower research artifact path used for evaluation summaries and reports, because a 30-second polling loop would otherwise spend too much time rewriting parquet files.
 
-### Execution assumptions
+### Evaluation Pricing Assumptions
 
-Signal evaluation and the compatibility backtest now use explicit execution assumptions rather than optimistic same-bar fills:
+Signal evaluation and the compatibility backtest now use explicit evaluation-pricing assumptions rather than optimistic same-bar fills:
 
 - signal issuance at bar close, with default entry on the next bar
 - configurable `open`/`close` entry and exit price fields
@@ -584,7 +584,7 @@ Current tests cover:
 
 ## Assumptions And Limits
 
-- The engine remains a suggestion engine, not an execution engine.
+- The engine remains a suggestion engine, not an order-placement or broker-execution engine.
 - India-first assumptions are preserved in commodity defaults, contract metadata, and INR-oriented context.
 - Free/local-first adapters still rely on user-supplied local files for best India-specific fidelity; public proxy tickers are fallbacks, not contract-perfect exchange replacements.
 - Paid providers remain optional and disabled by default.

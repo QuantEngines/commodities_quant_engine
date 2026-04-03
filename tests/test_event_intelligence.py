@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -47,7 +47,7 @@ def test_event_classification_and_aggregation_pipeline():
             "Central bank signals hawkish rate hike path",
         ],
         commodity_scope=["CRUDEOIL"],
-        as_of_timestamp=datetime.utcnow(),
+        as_of_timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     assert result.diagnostics["event_count"] == 3
     assert result.feature_vector["supply_shock_score"] > 0.0
@@ -61,7 +61,7 @@ def test_event_deduplication_and_clustering_reduces_repeated_headline_weight():
     result = engine.process_texts(
         raw_items=[repeated, repeated, repeated],
         commodity_scope=["CRUDEOIL"],
-        as_of_timestamp=datetime.utcnow(),
+        as_of_timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     assert result.diagnostics["raw_event_count"] == 3
     assert result.diagnostics["event_count"] == 1
@@ -134,7 +134,7 @@ def test_entity_graph_features_populated_from_policy_geopolitical_text(monkeypat
 def test_missing_data_fallback_yields_empty_events(monkeypatch):
     monkeypatch.setattr(settings.nlp_event, "enabled", True)
     engine = EventIntelligenceEngine()
-    result = engine.process_texts(raw_items=[], commodity_scope=["GOLD"], as_of_timestamp=datetime.utcnow())
+    result = engine.process_texts(raw_items=[], commodity_scope=["GOLD"], as_of_timestamp=datetime.now(timezone.utc).replace(tzinfo=None))
     assert result.events == []
     assert result.feature_vector["supply_shock_score"] == 0.0
 
@@ -145,7 +145,7 @@ def test_cluster_manifest_has_correct_structure_for_repeated_headlines():
     result = engine.process_texts(
         raw_items=[repeated, repeated, repeated],
         commodity_scope=["CRUDEOIL"],
-        as_of_timestamp=datetime.utcnow(),
+        as_of_timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     assert len(result.cluster_manifest) == 1
     cluster = result.cluster_manifest[0]
@@ -171,7 +171,7 @@ def test_cluster_manifest_has_one_entry_per_unique_event_type():
             "EIA weekly inventory drawdown at Cushing hub below expectations",
         ],
         commodity_scope=["CRUDEOIL"],
-        as_of_timestamp=datetime.utcnow(),
+        as_of_timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     # Three distinct event types — each should be its own cluster
     assert len(result.cluster_manifest) == len(result.events)
@@ -191,7 +191,7 @@ def test_cluster_report_generator_writes_markdown_and_json(tmp_path, monkeypatch
     result = engine.process_texts(
         raw_items=[repeated, repeated],
         commodity_scope=["CRUDEOIL"],
-        as_of_timestamp=datetime.utcnow(),
+        as_of_timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
     generator = ClusterReportGenerator()
@@ -200,7 +200,7 @@ def test_cluster_report_generator_writes_markdown_and_json(tmp_path, monkeypatch
         diagnostics=result.diagnostics,
         commodity="CRUDEOIL",
         signal_id="TEST-SIGNAL-001",
-        as_of_timestamp=datetime.utcnow(),
+        as_of_timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         storage=storage,
     )
 
@@ -220,6 +220,40 @@ def test_cluster_report_generator_writes_markdown_and_json(tmp_path, monkeypatch
     assert json_data["commodity"] == "CRUDEOIL"
     assert len(json_data["clusters"]) == 1
     assert json_data["clusters"][0]["cluster_size"] == 2
+
+
+def test_event_intelligence_uses_runtime_llm_when_enabled(monkeypatch):
+    monkeypatch.setattr(settings.nlp_event, "use_llm_extraction", True)
+
+    def fake_llm_json(raw_text, commodity_scope, source_id):
+        return """{
+            "event_type": "supply_disruption",
+            "commodity_scope": ["CRUDEOIL"],
+            "asset_scope": "single_commodity",
+            "expected_direction": "bullish",
+            "confidence": 0.91,
+            "persistence_horizon": "medium",
+            "event_strength": 0.88,
+            "uncertainty_score": 0.22,
+            "regime_relevance": 0.66,
+            "supply_demand_axis": "supply",
+            "volatility_implication": "higher",
+            "summary": "llm_generated_supply_disruption",
+            "entities_keywords": ["country:iran", "lane:hormuz"]
+        }"""
+
+    engine = EventIntelligenceEngine()
+    monkeypatch.setattr(engine.llm_client, "generate_event_json", fake_llm_json)
+
+    result = engine.process_texts(
+        raw_items=["Pipeline outage near Hormuz disrupts export flows"],
+        commodity_scope=["CRUDEOIL"],
+        as_of_timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+    assert result.events
+    assert result.events[0].summary.startswith("llm_generated_supply_disruption")
+    assert result.events[0].event_type == EventType.supply_disruption
 
 
 def test_research_workflow_generates_cluster_report_file(tmp_path, monkeypatch):

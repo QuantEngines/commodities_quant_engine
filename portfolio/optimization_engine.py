@@ -233,10 +233,11 @@ class PortfolioOptimizationEngine:
         self.commodity_families = self._build_commodity_families()
 
     def _build_commodity_families(self) -> Dict[str, str]:
-        """Map commodity -> family (bullion, base_metals, energy, agri)."""
+        """Map commodity -> sector family (bullion, base_metals, energy, agri)."""
         families = {}
         for commodity, defn in self.commodity_definitions.items():
-            major_family = defn.get("family", "other")
+            # commodity_universe.py stores the field as "segment", not "family"
+            major_family = defn.get("segment", defn.get("family", "other"))
             families[commodity] = major_family
         return families
 

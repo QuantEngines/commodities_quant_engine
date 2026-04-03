@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -43,7 +43,7 @@ class InefficiencyEngine:
             commodity=commodity,
             deviation_z=current_z,
             persistence=persistence,
-            timestamp=data.index[-1].to_pydatetime() if isinstance(data.index, pd.DatetimeIndex) else datetime.utcnow(),
+            timestamp=data.index[-1].to_pydatetime() if isinstance(data.index, pd.DatetimeIndex) else datetime.now(timezone.utc).replace(tzinfo=None),
             instability_warning=instability,
             fair_value_gap=fair_value_gap,
             cross_sectional_score=cross_sectional_score,

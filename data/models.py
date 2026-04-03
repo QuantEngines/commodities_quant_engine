@@ -241,7 +241,7 @@ class Suggestion:
 - **Active Contract:** {self.active_contract}
 - **Signal ID:** {self.signal_id or "n/a"}
 - **Decision:** {self.final_category} | direction={self.preferred_direction} | confidence={self.confidence_score:.2f} | score={self.composite_score:.2f}
-- **Execution:** entry={self.suggested_entry_style} | horizon={self.suggested_holding_horizon}D | data_quality={self.data_quality_flag}
+- **Positioning:** entry_style={self.suggested_entry_style} | horizon={self.suggested_holding_horizon}D | data_quality={self.data_quality_flag}
 - **Regime:** {self.regime_label} | p={_format_optional_number(regime_probability, digits=2)} | macro_align={_format_optional_number(self.macro_alignment_score, digits=2)} | macro_conflict={_format_optional_number(self.macro_conflict_score, digits=2)} | event_risk={'high' if self.macro_event_risk_flag else 'low'} | macro_conf_adj={_format_optional_number(self.macro_confidence_adjustment, digits=2, signed=True)}
 - **Shipping:** summary={self.shipping_summary or "Not available"} | align={_format_optional_number(self.shipping_alignment_score, digits=2)} | conflict={_format_optional_number(self.shipping_conflict_score, digits=2)} | risk={'high' if self.shipping_risk_flag else 'low'} | ship_quality={_format_optional_number(self.shipping_data_quality_score, digits=2)}
 - **Model Lineage:** model={self.model_version or "n/a"} | config={self.config_version or "n/a"}
