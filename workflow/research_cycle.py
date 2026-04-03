@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime
-from typing import Dict, List, Mapping, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
+
+import json
 
 import pandas as pd
 
@@ -58,6 +60,7 @@ class ResearchWorkflow:
             shipping_feature_vectors = shipping_context_builder.build(
                 commodity=commodity,
                 as_of_timestamp=as_of_timestamp,
+                macro_features=macro_features,
             )
         
         active_version = self.adaptation_engine.load_active_version(commodity)
@@ -77,6 +80,15 @@ class ResearchWorkflow:
             llm_json_by_source_id=llm_json_by_source_id,
             as_of_timestamp=as_of_timestamp,
         )
+        shipping_artifacts = self._persist_shipping_vectors(
+            commodity=commodity,
+            signal_id=package.snapshot.signal_id,
+            as_of_timestamp=as_of_timestamp,
+            shipping_feature_vectors=shipping_feature_vectors,
+        )
+        if shipping_artifacts:
+            package.suggestion.diagnostics["shipping_artifacts"] = shipping_artifacts
+            package.snapshot.metadata["shipping_artifacts"] = shipping_artifacts
         if persist_snapshot:
             self.evaluation_engine.persist_signal_snapshots([package.snapshot], commodity=commodity)
             self._persist_structured_events(package=package, commodity=commodity)
@@ -88,9 +100,116 @@ class ResearchWorkflow:
                 "commodity": package.snapshot.commodity,
                 "suggestion_markdown": package.suggestion.to_markdown(),
                 "quality_report": asdict(package.quality_report),
+                "shipping_artifacts": shipping_artifacts,
             }
             self.storage.write_json(settings.storage.report_store, f"{commodity}_{package.snapshot.signal_id}", report_payload)
         return package
+
+    def _persist_shipping_vectors(
+        self,
+        commodity: str,
+        signal_id: str,
+        as_of_timestamp: datetime,
+        shipping_feature_vectors: Optional[List[ShippingFeatureVector]],
+    ) -> Dict[str, Any]:
+        vectors = shipping_feature_vectors or []
+        if not vectors:
+            return {}
+
+        serializable_rows: List[Dict[str, Any]] = []
+        flattened_rows: List[Dict[str, Any]] = []
+        for index, vector in enumerate(vectors):
+            vector_payload = vector.to_dict()
+            row_id = f"{signal_id}_{pd.Timestamp(vector.timestamp).isoformat()}_{index}"
+            serializable_rows.append(
+                {
+                    "row_id": row_id,
+                    "signal_id": signal_id,
+                    "commodity": commodity,
+                    "as_of_timestamp": as_of_timestamp.isoformat(),
+                    **vector_payload,
+                }
+            )
+            flattened_rows.append(
+                {
+                    "row_id": row_id,
+                    "signal_id": signal_id,
+                    "commodity": commodity,
+                    "as_of_timestamp": as_of_timestamp.isoformat(),
+                    "vector_timestamp": pd.Timestamp(vector.timestamp).isoformat(),
+                    "source": vector.source,
+                    "quality_score": float(vector.quality_score),
+                    "confidence_score": float(vector.confidence_score),
+                    "observation_start": pd.Timestamp(vector.observation_window.start_time).isoformat(),
+                    "observation_end": pd.Timestamp(vector.observation_window.end_time).isoformat(),
+                    "bdi_benchmark_active": float(vector.features.get("bdi_benchmark_active", 0.0)),
+                    "bdi_benchmark_level": float(vector.features.get("bdi_benchmark_level", 0.0)),
+                    "bdi_benchmark_zscore": float(vector.features.get("bdi_benchmark_zscore", 0.0)),
+                    "bdi_benchmark_momentum": float(vector.features.get("bdi_benchmark_momentum", 0.0)),
+                    "bdi_benchmark_support": float(vector.features.get("bdi_benchmark_support", 0.0)),
+                    "bdi_shipping_stress_score": float(vector.features.get("bdi_shipping_stress_score", 0.0)),
+                    "bdi_shipping_divergence": float(vector.features.get("bdi_shipping_divergence", 0.0)),
+                    "shipping_market_benchmark_active": float(vector.features.get("shipping_market_benchmark_active", 0.0)),
+                    "shipping_market_benchmark_zscore": float(vector.features.get("shipping_market_benchmark_zscore", 0.0)),
+                    "shipping_market_benchmark_momentum": float(vector.features.get("shipping_market_benchmark_momentum", 0.0)),
+                    "shipping_market_benchmark_support": float(vector.features.get("shipping_market_benchmark_support", 0.0)),
+                    "shipping_market_stress_score": float(vector.features.get("shipping_market_stress_score", 0.0)),
+                    "shipping_market_divergence": float(vector.features.get("shipping_market_divergence", 0.0)),
+                    "shipping_features": json.dumps(vector.features, default=str),
+                    "key_drivers": json.dumps(vector.key_drivers, default=str),
+                    "notes": json.dumps(vector.notes, default=str),
+                }
+            )
+
+        history_path = self.storage.append_dataframe(
+            pd.DataFrame(flattened_rows),
+            settings.storage.shipping_store,
+            f"{commodity}_benchmark_vectors",
+            dedupe_on=["row_id"],
+        )
+        raw_path = self.storage.append_jsonl(
+            settings.storage.shipping_store,
+            f"{commodity}_benchmark_vectors",
+            serializable_rows,
+            compress=True,
+        )
+
+        latest_row = flattened_rows[-1]
+        divergence_values = [float(row["bdi_shipping_divergence"]) for row in flattened_rows]
+        active_rows = [row for row in flattened_rows if float(row["bdi_benchmark_active"]) > 0.5]
+        summary_payload = {
+            "signal_id": signal_id,
+            "commodity": commodity,
+            "as_of_timestamp": as_of_timestamp.isoformat(),
+            "vector_count": len(flattened_rows),
+            "benchmark_active_count": len(active_rows),
+            "latest_vector_timestamp": latest_row["vector_timestamp"],
+            "latest_bdi_benchmark_zscore": latest_row["bdi_benchmark_zscore"],
+            "latest_bdi_benchmark_support": latest_row["bdi_benchmark_support"],
+            "latest_bdi_shipping_stress_score": latest_row["bdi_shipping_stress_score"],
+            "latest_bdi_shipping_divergence": latest_row["bdi_shipping_divergence"],
+            "latest_shipping_market_benchmark_zscore": latest_row["shipping_market_benchmark_zscore"],
+            "latest_shipping_market_benchmark_support": latest_row["shipping_market_benchmark_support"],
+            "latest_shipping_market_stress_score": latest_row["shipping_market_stress_score"],
+            "latest_shipping_market_divergence": latest_row["shipping_market_divergence"],
+            "max_abs_bdi_shipping_divergence": max((abs(value) for value in divergence_values), default=0.0),
+            "mean_abs_bdi_shipping_divergence": float(sum(abs(value) for value in divergence_values) / len(divergence_values)),
+            "history_path": str(history_path),
+            "raw_path": str(raw_path),
+        }
+        summary_path = self.storage.write_json(
+            settings.storage.shipping_store,
+            f"{commodity}_{signal_id}_benchmark_summary",
+            summary_payload,
+        )
+        return {
+            "history_path": str(history_path),
+            "raw_path": str(raw_path),
+            "summary_path": str(summary_path),
+            "latest_bdi_shipping_divergence": summary_payload["latest_bdi_shipping_divergence"],
+            "latest_shipping_market_divergence": summary_payload["latest_shipping_market_divergence"],
+            "benchmark_active_count": summary_payload["benchmark_active_count"],
+        }
 
     def _generate_cluster_report(self, package: SignalPackage, commodity: str) -> None:
         cluster_manifest = package.suggestion.diagnostics.get("event_cluster_manifest", [])

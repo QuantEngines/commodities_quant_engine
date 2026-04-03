@@ -28,7 +28,7 @@ class MacroConfidenceOverlay:
         conflict = self._compute_conflict_score(commodity, macro_context, base_direction)
         event_risk = self._compute_event_risk_penalty(macro_events, timestamp)
         uncertainty = self._compute_uncertainty_penalty(macro_context)
-        support_boost = self._compute_support_boost(alignment, macro_context)
+        support_boost = self._compute_support_boost(commodity, alignment, macro_context)
         final_adjustment = max(
             -0.5,
             min(
@@ -63,6 +63,7 @@ class MacroConfidenceOverlay:
     def _compute_alignment_score(self, commodity: str, macro_context: Dict[str, float], base_direction: str) -> float:
         alignment = 0.0
         sensitivities = self.macro_sensitivities.get(commodity, [])
+        commodity_family = self._commodity_family(commodity)
         real_rate = macro_context.get("real_rate_in")
         if real_rate is not None and "real_rates" in sensitivities and precious_metal_family(commodity):
             if base_direction == "bullish" and real_rate < 1.0:
@@ -81,11 +82,23 @@ class MacroConfidenceOverlay:
                 alignment += 0.2
             elif base_direction == "bearish" and sentiment < -0.2:
                 alignment += 0.2
+
+        bdi_momentum = macro_context.get("bdi_momentum_20d")
+        if bdi_momentum is not None and commodity_family in {"base_metals", "agri"}:
+            if base_direction == "bullish" and bdi_momentum > 0.03:
+                alignment += 0.2
+            elif base_direction == "bearish" and bdi_momentum < -0.03:
+                alignment += 0.2
+
+        ovx_zscore = macro_context.get("ovx_zscore")
+        if ovx_zscore is not None and commodity_family == "energy" and base_direction == "bearish" and ovx_zscore > 1.0:
+            alignment += 0.2
         return min(1.0, alignment)
 
     def _compute_conflict_score(self, commodity: str, macro_context: Dict[str, float], base_direction: str) -> float:
         conflict = 0.0
         sensitivities = self.macro_sensitivities.get(commodity, [])
+        commodity_family = self._commodity_family(commodity)
         real_rate = macro_context.get("real_rate_in")
         if real_rate is not None and "real_rates" in sensitivities and precious_metal_family(commodity):
             if base_direction == "bullish" and real_rate > 2.5:
@@ -94,6 +107,15 @@ class MacroConfidenceOverlay:
         if growth is not None and "growth_expectations" in sensitivities:
             if base_direction == "bullish" and growth < -0.5:
                 conflict += 0.5
+
+        ovx_zscore = macro_context.get("ovx_zscore")
+        if ovx_zscore is not None and commodity_family == "energy" and base_direction == "bullish" and ovx_zscore > 1.0:
+            conflict += 0.35
+
+        bdi_momentum = macro_context.get("bdi_momentum_20d")
+        if bdi_momentum is not None and commodity_family in {"base_metals", "agri"}:
+            if base_direction == "bullish" and bdi_momentum < -0.03:
+                conflict += 0.25
         return min(1.0, conflict)
 
     def _compute_event_risk_penalty(self, macro_events: List[MacroEvent], timestamp: datetime) -> float:
@@ -110,11 +132,19 @@ class MacroConfidenceOverlay:
             penalty += 0.2
         if abs(macro_context.get("sentiment_volatility", 0.0)) > 0.5:
             penalty += 0.15
+        if abs(macro_context.get("ovx_zscore", 0.0)) > 1.5:
+            penalty += 0.15
+        if macro_context.get("ovx_shock_flag", 0.0) > 0.5:
+            penalty += 0.2
+        if macro_context.get("bdi_shock_flag", 0.0) > 0.5:
+            penalty += 0.1
         return min(1.0, penalty)
 
-    def _compute_support_boost(self, alignment: float, macro_context: Dict[str, float]) -> float:
+    def _compute_support_boost(self, commodity: str, alignment: float, macro_context: Dict[str, float]) -> float:
         boost = 0.1 if alignment > 0.6 else 0.0
         if macro_context.get("macro_sentiment_score", 0.0) > 0.3:
+            boost += 0.05
+        if self._commodity_family(commodity) in {"base_metals", "agri"} and macro_context.get("bdi_zscore", 0.0) > 1.0:
             boost += 0.05
         return boost
 
@@ -126,6 +156,10 @@ class MacroConfidenceOverlay:
             drivers.append(f"Real rate in India: {macro_context['real_rate_in']:.1f}%")
         if macro_context.get("macro_sentiment_score") is not None:
             drivers.append(f"Macro sentiment score: {macro_context['macro_sentiment_score']:.2f}")
+        if macro_context.get("bdi_momentum_20d") is not None:
+            drivers.append(f"BDI 20D momentum: {macro_context['bdi_momentum_20d']:.2%}")
+        if macro_context.get("ovx_zscore") is not None:
+            drivers.append(f"OVX z-score: {macro_context['ovx_zscore']:.2f}")
         return drivers[:3]
 
     def _extract_key_risks(self, macro_context: Dict[str, float], event_risk: float, uncertainty: float) -> List[str]:
@@ -136,6 +170,10 @@ class MacroConfidenceOverlay:
             risks.append("Macro information set is unusually noisy")
         if macro_context.get("news_volume_burst", 1.0) > 2.0:
             risks.append("News volume burst may destabilize short-horizon signals")
+        if macro_context.get("ovx_shock_flag", 0.0) > 0.5:
+            risks.append("Crude volatility index indicates a volatility-shock regime")
+        if macro_context.get("bdi_shock_flag", 0.0) > 0.5:
+            risks.append("Baltic Dry Index shock suggests unstable freight demand")
         return risks[:3]
 
     def _generate_news_summary(self, macro_context: Dict[str, float]) -> Optional[str]:
@@ -144,3 +182,9 @@ class MacroConfidenceOverlay:
             return None
         tone = "positive" if sentiment > 0.2 else "negative" if sentiment < -0.2 else "mixed"
         return f"Macro news tone is {tone}."
+
+    def _commodity_family(self, commodity: str) -> str:
+        config = settings.commodities.get(commodity)
+        if config is None:
+            return "default"
+        return str(config.segment).lower()

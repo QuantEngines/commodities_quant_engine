@@ -8,10 +8,56 @@ sources:
     adapter_class: "data.ingestion.macro.providers.official_macro_adapter.OfficialMacroAdapter"
     enabled: true
     config:
-      series_catalog: {}
+      series_catalog:
+        BALTIC_DRY_INDEX:
+          source: "FRED"
+          unit: "index"
+          frequency: "daily"
+        BALTIC_CAPESIZE_INDEX:
+          source: "optional_local_proxy"
+          unit: "index"
+          frequency: "daily"
+        BALTIC_PANAMAX_INDEX:
+          source: "optional_local_proxy"
+          unit: "index"
+          frequency: "daily"
+        BALTIC_SUPRAMAX_INDEX:
+          source: "optional_local_proxy"
+          unit: "index"
+          frequency: "daily"
+        BALTIC_DIRTY_TANKER_INDEX:
+          source: "optional_local_proxy"
+          unit: "index"
+          frequency: "daily"
+        BALTIC_CLEAN_TANKER_INDEX:
+          source: "optional_local_proxy"
+          unit: "index"
+          frequency: "daily"
+        LNG_CARRIER_RATE_PROXY:
+          source: "optional_local_proxy"
+          unit: "rate"
+          frequency: "daily"
+        BULKER_VESSEL_VALUE_PROXY:
+          source: "optional_local_proxy"
+          unit: "value"
+          frequency: "daily"
+        TANKER_VESSEL_VALUE_PROXY:
+          source: "optional_local_proxy"
+          unit: "value"
+          frequency: "daily"
+        LNG_CARRIER_VESSEL_VALUE_PROXY:
+          source: "optional_local_proxy"
+          unit: "value"
+          frequency: "daily"
+        CRUDE_OIL_VOLATILITY_INDEX:
+          source: "FRED"
+          unit: "index"
+          frequency: "daily"
       event_calendar_catalog: {}
-      allow_fred: false
-      fred_series: {}
+      allow_fred: true
+      fred_series:
+        BALTIC_DRY_INDEX: "BDIY"
+        CRUDE_OIL_VOLATILITY_INDEX: "OVXCLS"
 
   generic_news:
     name: "Generic Free News"

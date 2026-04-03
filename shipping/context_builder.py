@@ -19,6 +19,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from ..config.settings import settings
+from ..data.models import MacroFeature
 from ..shipping.models import ShippingFeatureVector
 from ..shipping.pipeline import ShippingFeaturePipeline
 
@@ -65,6 +66,7 @@ class ShippingContextBuilder:
         self,
         commodity: str,
         as_of_timestamp: datetime,
+        macro_features: Optional[List[MacroFeature]] = None,
         real_vessel_positions: Optional[pd.DataFrame] = None,
         real_port_calls: Optional[pd.DataFrame] = None,
         real_route_events: Optional[pd.DataFrame] = None,
@@ -86,6 +88,7 @@ class ShippingContextBuilder:
                     vessel_positions=real_vessel_positions,
                     port_calls=real_port_calls,
                     route_events=real_route_events,
+                    macro_features=macro_features,
                     as_of_timestamp=as_of_timestamp,
                 )
                 if features:
@@ -110,6 +113,7 @@ class ShippingContextBuilder:
                 vessel_positions=stub_positions,
                 port_calls=pd.DataFrame(),
                 route_events=stub_routes,
+                macro_features=macro_features,
                 as_of_timestamp=as_of_timestamp,
             )
             

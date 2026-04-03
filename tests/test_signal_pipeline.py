@@ -3,8 +3,10 @@ from datetime import datetime
 import pandas as pd
 
 from ..config.settings import settings
+from ..data.models import MacroFeature
 from ..data.storage.local import LocalStorage
 from ..regimes.regime_engine import RegimeEngine
+from ..shipping import ShippingFeaturePipeline
 from ..signals.composite.composite_decision import CompositeDecisionEngine
 from ..workflow import ResearchWorkflow
 
@@ -23,6 +25,42 @@ def make_price_frame(periods: int = 260) -> pd.DataFrame:
         index=index,
     )
     return frame
+
+
+def make_bulk_positions(timestamp: datetime) -> pd.DataFrame:
+    base = pd.Timestamp(timestamp) - pd.Timedelta(days=8)
+    rows = []
+    for day in range(8):
+        rows.extend(
+            [
+                {
+                    "vessel_id": f"bulk-a-{day}",
+                    "timestamp": base + pd.Timedelta(days=day),
+                    "latitude": 31.0 + day * 0.05,
+                    "longitude": 121.0 + day * 0.05,
+                    "speed_knots": max(1.0, 10.0 - day * 0.8),
+                    "cargo_class": "bulk_carrier",
+                },
+                {
+                    "vessel_id": f"bulk-b-{day}",
+                    "timestamp": base + pd.Timedelta(days=day, hours=6),
+                    "latitude": 30.8 + day * 0.04,
+                    "longitude": 120.8 + day * 0.04,
+                    "speed_knots": max(1.0, 9.0 - day * 0.7),
+                    "cargo_class": "bulk_carrier",
+                },
+            ]
+        )
+    return pd.DataFrame(rows)
+
+
+def make_benchmark_macro_features(timestamp: datetime) -> list[MacroFeature]:
+    return [
+        MacroFeature(feature_name="bdi_level", timestamp=timestamp, value=1450.0),
+        MacroFeature(feature_name="bdi_zscore", timestamp=timestamp, value=1.4),
+        MacroFeature(feature_name="bdi_momentum_20d", timestamp=timestamp, value=0.08),
+        MacroFeature(feature_name="bdi_shock_flag", timestamp=timestamp, value=1.0),
+    ]
 
 
 def test_composite_engine_generates_auditable_signal_package():
@@ -101,6 +139,48 @@ def test_research_workflow_persists_structured_events_with_snapshot(tmp_path, mo
     persisted = storage.load_jsonl("signals", "CRUDEOIL_structured_events")
     assert persisted
     assert all(item.get("signal_id") == package.snapshot.signal_id for item in persisted)
+
+
+def test_research_workflow_persists_benchmark_aware_shipping_artifacts(tmp_path):
+    storage = LocalStorage(str(tmp_path))
+    workflow = ResearchWorkflow(storage=storage)
+    price_data = make_price_frame()
+    as_of_timestamp = price_data.index[-1].to_pydatetime()
+    positions = make_bulk_positions(as_of_timestamp)
+    benchmark_timestamp = pd.to_datetime(positions["timestamp"]).max().to_pydatetime()
+    macro_features = make_benchmark_macro_features(benchmark_timestamp)
+    shipping_vectors = ShippingFeaturePipeline().run(
+        commodity="COPPER",
+        vessel_positions=positions,
+        route_events=pd.DataFrame(),
+        macro_features=macro_features,
+        as_of_timestamp=as_of_timestamp,
+    )
+
+    package = workflow.run_signal_cycle(
+        commodity="COPPER",
+        price_data=price_data,
+        macro_features=macro_features,
+        shipping_feature_vectors=shipping_vectors,
+        as_of_timestamp=as_of_timestamp,
+        persist_snapshot=False,
+        persist_report=True,
+    )
+
+    artifact_info = package.suggestion.diagnostics.get("shipping_artifacts", {})
+    assert artifact_info.get("history_path")
+    assert artifact_info.get("summary_path")
+    summary_name = f"COPPER_{package.snapshot.signal_id}_benchmark_summary"
+    summary_payload = storage.read_json(settings.storage.shipping_store, summary_name)
+    assert summary_payload.get("benchmark_active_count", 0) >= 1
+    assert "latest_bdi_shipping_divergence" in summary_payload
+    assert "latest_shipping_market_divergence" in summary_payload
+
+    history = storage.load_domain_dataframe(settings.storage.shipping_store, "COPPER_benchmark_vectors")
+    assert not history.empty
+    assert "bdi_shipping_divergence" in history.columns
+    assert "shipping_market_divergence" in history.columns
+    assert history["signal_id"].eq(package.snapshot.signal_id).any()
 
 
 def test_research_workflow_runs_suggestion_only_portfolio_cycle(tmp_path):

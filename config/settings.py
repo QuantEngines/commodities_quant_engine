@@ -8,6 +8,49 @@ from pydantic_settings import BaseSettings
 from .commodity_universe import default_macro_sensitivities, default_mcx_commodity_definitions
 
 
+def default_macro_series_mappings() -> Dict[str, Dict[str, str]]:
+    return {
+        "BALTIC_DRY_INDEX": {
+            "fred": "BDIY",
+            "alias_1": "BDI",
+            "alias_2": "BDIY",
+        },
+        "BALTIC_CAPESIZE_INDEX": {
+            "alias_1": "BCI",
+        },
+        "BALTIC_PANAMAX_INDEX": {
+            "alias_1": "BPI",
+        },
+        "BALTIC_SUPRAMAX_INDEX": {
+            "alias_1": "BSI",
+        },
+        "BALTIC_DIRTY_TANKER_INDEX": {
+            "alias_1": "BDTI",
+        },
+        "BALTIC_CLEAN_TANKER_INDEX": {
+            "alias_1": "BCTI",
+        },
+        "LNG_CARRIER_RATE_PROXY": {
+            "alias_1": "LNG_SHIPPING_RATE",
+            "alias_2": "LNG_CARRIER_CHARTER_RATE",
+        },
+        "BULKER_VESSEL_VALUE_PROXY": {
+            "alias_1": "BULKER_VESSEL_VALUE",
+        },
+        "TANKER_VESSEL_VALUE_PROXY": {
+            "alias_1": "TANKER_VESSEL_VALUE",
+        },
+        "LNG_CARRIER_VESSEL_VALUE_PROXY": {
+            "alias_1": "LNG_CARRIER_VESSEL_VALUE",
+        },
+        "CRUDE_OIL_VOLATILITY_INDEX": {
+            "fred": "OVXCLS",
+            "alias_1": "OVX",
+            "alias_2": "OVXCLS",
+        },
+    }
+
+
 class CommodityConfig(BaseModel):
     symbol: str
     exchange: str
@@ -47,7 +90,7 @@ class MacroFeatureConfig(BaseModel):
 class MacroSettings(BaseModel):
     sources: Dict[str, MacroDataSourceConfig] = Field(default_factory=dict)
     features: Dict[str, MacroFeatureConfig] = Field(default_factory=dict)
-    series_mappings: Dict[str, Dict[str, str]] = Field(default_factory=dict)
+    series_mappings: Dict[str, Dict[str, str]] = Field(default_factory=default_macro_series_mappings)
     commodity_sensitivities: Dict[str, List[str]] = Field(default_factory=default_macro_sensitivities)
     max_missing_pct: float = 0.5
     min_history_days: int = 252
@@ -263,6 +306,7 @@ class StorageSettings(BaseModel):
     base_dir: str = "artifacts"
     market_data_store: str = "market_data"
     signal_store: str = "signals"
+    shipping_store: str = "shipping"
     evaluation_store: str = "evaluations"
     parameter_store: str = "parameters"
     report_store: str = "reports"

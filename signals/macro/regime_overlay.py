@@ -55,6 +55,7 @@ class MacroRegimeOverlay:
         macro_context: Dict[str, float],
     ) -> Dict[str, Any]:
         sensitivities = self.macro_sensitivities.get(commodity, [])
+        commodity_family = self._commodity_family(commodity)
         contribution = 0.0
         drivers: List[str] = []
         macro_regime = "neutral"
@@ -95,11 +96,38 @@ class MacroRegimeOverlay:
             macro_regime = "risk_off"
             drivers.append("Risk-off tone is supporting defensive demand")
 
+        ovx_zscore = macro_context.get("ovx_zscore")
+        if commodity_family == "energy" and ovx_zscore is not None:
+            if ovx_zscore > 1.5:
+                contribution -= 0.15
+                macro_regime = "risk_off_volatile"
+                drivers.append("OVX indicates elevated crude-volatility stress")
+            elif ovx_zscore < -0.5:
+                contribution += 0.08
+                macro_regime = "stable_volatility"
+
+        bdi_zscore = macro_context.get("bdi_zscore")
+        if commodity_family in {"base_metals", "agri"} and bdi_zscore is not None:
+            if bdi_zscore > 0.75:
+                contribution += 0.12
+                macro_regime = "shipping_demand_supportive"
+                drivers.append("Baltic Dry Index trend supports real-economy demand")
+            elif bdi_zscore < -0.75:
+                contribution -= 0.12
+                macro_regime = "shipping_demand_slowdown"
+                drivers.append("Baltic Dry Index weakness flags demand slowdown")
+
         return {
             "macro_regime": macro_regime,
             "contribution": max(-0.5, min(0.5, contribution)),
             "drivers": drivers,
         }
+
+    def _commodity_family(self, commodity: str) -> str:
+        config = settings.commodities.get(commodity)
+        if config is None:
+            return "default"
+        return str(config.segment).lower()
 
     def _create_combined_regime_label(self, base_regime: str, macro_regime: str) -> str:
         if macro_regime == "neutral":

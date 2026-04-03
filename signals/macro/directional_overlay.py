@@ -57,6 +57,7 @@ class MacroDirectionalOverlay:
         horizon: int,
     ) -> Dict[str, Any]:
         sensitivities = self.macro_sensitivities.get(commodity, [])
+        commodity_family = self._commodity_family(commodity)
         base_direction = "bullish" if base_score >= 0 else "bearish"
         adjustment = 0.0
         alignment = 0.0
@@ -97,6 +98,38 @@ class MacroDirectionalOverlay:
             confidence_multiplier *= 0.85
             factors.append("Upcoming macro event reduces near-term confidence")
 
+        ovx_zscore = macro_context.get("ovx_zscore")
+        ovx_momentum = macro_context.get("ovx_momentum_10d")
+        if commodity_family == "energy" and (ovx_zscore is not None or ovx_momentum is not None):
+            elevated_ovx = (ovx_zscore is not None and ovx_zscore > 1.0) or (ovx_momentum is not None and ovx_momentum > 0.08)
+            if base_direction == "bullish" and elevated_ovx:
+                adjustment -= 0.12
+                alignment -= 0.20
+                factors.append("Elevated OVX conflicts with bullish energy conviction")
+            elif base_direction == "bearish" and elevated_ovx:
+                adjustment += 0.08
+                alignment += 0.12
+                factors.append("Elevated OVX supports bearish energy stance")
+
+        bdi_momentum = macro_context.get("bdi_momentum_20d")
+        if commodity_family in {"base_metals", "agri"} and bdi_momentum is not None:
+            if base_direction == "bullish" and bdi_momentum > 0.03:
+                adjustment += 0.10
+                alignment += 0.18
+                factors.append("Rising BDI supports cyclical commodity demand")
+            elif base_direction == "bullish" and bdi_momentum < -0.03:
+                adjustment -= 0.10
+                alignment -= 0.18
+                factors.append("Falling BDI weakens cyclical demand case")
+            elif base_direction == "bearish" and bdi_momentum < -0.03:
+                adjustment += 0.08
+                alignment += 0.12
+                factors.append("Falling BDI aligns with softer demand outlook")
+
+        if macro_context.get("bdi_shock_flag", 0.0) > 0.5 or macro_context.get("ovx_shock_flag", 0.0) > 0.5:
+            confidence_multiplier *= 0.90
+            factors.append("Cross-asset shock flag reduces directional confidence")
+
         horizon_scale = min(1.0, max(0.25, horizon / 20.0))
         return {
             "adjustment": adjustment * horizon_scale,
@@ -104,3 +137,9 @@ class MacroDirectionalOverlay:
             "confidence_multiplier": confidence_multiplier,
             "factors": factors,
         }
+
+    def _commodity_family(self, commodity: str) -> str:
+        config = settings.commodities.get(commodity)
+        if config is None:
+            return "default"
+        return str(config.segment).lower()

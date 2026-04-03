@@ -13,12 +13,31 @@ from ....models import MacroEvent, MacroSeries, NewsItem
 class OfficialMacroAdapter(MacroDataSource):
     """Official/public macro adapter driven by free local files or public URLs."""
 
+    DEFAULT_SERIES_CATALOG: Dict[str, Dict[str, Any]] = {
+        "BALTIC_DRY_INDEX": {
+            "unit": "index",
+            "frequency": "daily",
+            "source": "FRED",
+        },
+        "CRUDE_OIL_VOLATILITY_INDEX": {
+            "unit": "index",
+            "frequency": "daily",
+            "source": "FRED",
+        },
+    }
+    DEFAULT_FRED_SERIES: Dict[str, str] = {
+        "BALTIC_DRY_INDEX": "BDIY",
+        "CRUDE_OIL_VOLATILITY_INDEX": "OVXCLS",
+    }
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self.series_catalog = config.get("series_catalog", {})
+        configured_series_catalog = config.get("series_catalog", {})
+        self.series_catalog = {**self.DEFAULT_SERIES_CATALOG, **configured_series_catalog}
         self.event_calendar_catalog = config.get("event_calendar_catalog", {})
-        self.fred_series = config.get("fred_series", {})
-        self.allow_fred = bool(config.get("allow_fred", False))
+        configured_fred_series = config.get("fred_series", {})
+        self.fred_series = {**self.DEFAULT_FRED_SERIES, **configured_fred_series}
+        self.allow_fred = bool(config.get("allow_fred", True))
 
     def fetch_macro_series(self, series_name: str, start_date: date, end_date: date) -> List[MacroSeries]:
         frame = self._load_series_frame(series_name)

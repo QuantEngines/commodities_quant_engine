@@ -251,6 +251,33 @@ package = workflow.run_signal_cycle(
 
 If no shipping vectors are supplied, the existing engine behavior is preserved.
 
+### Shipping Market Benchmarks
+
+The shipping layer now integrates multi-family shipping market benchmarks as first-class signal inputs. These optional indexes provide real-time context on transport cost pressures and help identify divergences between shipping costs and commodity valuations.
+
+Supported benchmark families:
+
+- **Dry-bulk** (for base metals and agri commodities): Baltic Dry Index (BDI), Baltic Capesize (BCI), Baltic Panamax (BPI), Baltic Supramax (BSI), and estimated bulker vessel values
+- **Tanker** (for crude oil): Baltic Dirty Tanker Index (BDTI), Baltic Clean Tanker Index (BCTI), and estimated tanker vessel values
+- **LNG** (for natural gas): LNG carrier rates and estimated LNG carrier vessel values
+
+Each benchmark family is commodity-gated (e.g., dry-bulk features only compute for base metals/agri; tanker features only for crude oil). Per-commodity features include:
+
+- benchmark level (normalized, zero-mean)
+- benchmark momentum (strength of recent trend)
+- benchmark shock flags (where applicable)
+- shipping-vs-benchmark divergence (spread between observed logistics stress and predicted by index)
+
+Benchmarks are aggregated with commodity-specific weights to produce generic `shipping_market_benchmark_zscore` and `shipping_market_divergence` outputs, while family-specific fields (e.g., `bdi_benchmark_zscore`, `bdti_shipping_divergence`) are preserved for research traceability.
+
+Shipping benchmark vectors are automatically persisted to the research artifact store:
+
+- parquet history: `artifacts/shipping/<COMMODITY>_benchmark_vectors.parquet` with flattened benchmark + divergence columns
+- JSONL stream: `artifacts/shipping/<COMMODITY>_benchmark_vectors.jsonl.gz` (compressed)
+- per-signal summary: `artifacts/shipping/<COMMODITY>_<SIGNAL_ID>_benchmark_summary.json`
+
+This enables research on benchmark divergence patterns, seasonality, and relative predictiveness across commodity families.
+
 ## Sample Local Data Layout
 
 For best India-specific fidelity, keep exchange and macro data in local CSV or parquet files and point provider configs at those files.

@@ -182,6 +182,7 @@ class SignalEvaluationEngine:
                         "suggested_horizon": snapshot.suggested_horizon,
                         "signal_category": snapshot.signal_category,
                         "model_version": snapshot.model_version,
+                        **self._extract_macro_edge_markers(snapshot),
                         **pricing_metadata,
                     },
                 )
@@ -262,8 +263,83 @@ class SignalEvaluationEngine:
             "by_regime": by_regime,
             "confusion_matrix": confusion,
             "precision_recall": precision_recall,
+            "macro_incremental_edge_checks": self._macro_incremental_edge_checks(detailed_df),
         }
         return summary_metrics, scorecards, degradation_alerts
+
+    def _extract_macro_edge_markers(self, snapshot: SignalSnapshot) -> Dict[str, float]:
+        marker_keys = (
+            "bdi_zscore",
+            "bdi_momentum_20d",
+            "bdi_shock_flag",
+            "ovx_zscore",
+            "ovx_momentum_10d",
+            "ovx_shock_flag",
+        )
+        marker_values: Dict[str, float] = {}
+        highlight_map = snapshot.metadata.get("macro_feature_highlights", {}) if isinstance(snapshot.metadata, dict) else {}
+        for key in marker_keys:
+            value = snapshot.feature_vector.get(key)
+            if value is None:
+                value = highlight_map.get(key)
+            if value is None:
+                continue
+            try:
+                marker_values[key] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return marker_values
+
+    def _macro_incremental_edge_checks(self, detailed_df: pd.DataFrame) -> Dict[str, object]:
+        if detailed_df.empty or "metadata" not in detailed_df.columns:
+            return {"sample_size": 0, "baseline": None, "checks": {}}
+
+        frame = detailed_df.copy()
+        frame["metadata"] = frame["metadata"].map(self._deserialize_payload)
+        for key in (
+            "bdi_zscore",
+            "bdi_momentum_20d",
+            "bdi_shock_flag",
+            "ovx_zscore",
+            "ovx_momentum_10d",
+            "ovx_shock_flag",
+        ):
+            frame[key] = frame["metadata"].map(lambda item, k=key: item.get(k) if isinstance(item, dict) else None)
+            frame[key] = pd.to_numeric(frame[key], errors="coerce")
+
+        baseline = {
+            "sample_size": int(len(frame)),
+            "hit_rate": float(frame["direction_correct"].mean()),
+            "average_return": float(frame["signed_return"].mean()),
+        }
+
+        checks: Dict[str, Dict[str, float]] = {}
+        regime_masks = {
+            "ovx_high": (frame["ovx_zscore"] >= 1.0) | (frame["ovx_shock_flag"] >= 0.5),
+            "ovx_low": (frame["ovx_zscore"] <= 0.0) & (frame["ovx_shock_flag"].fillna(0.0) < 0.5),
+            "bdi_strong": (frame["bdi_zscore"] >= 0.75) | (frame["bdi_momentum_20d"] >= 0.03),
+            "bdi_weak": (frame["bdi_zscore"] <= -0.5) | (frame["bdi_momentum_20d"] <= -0.03),
+        }
+
+        for check_name, mask in regime_masks.items():
+            subset = frame[mask.fillna(False)]
+            if subset.empty:
+                continue
+            hit_rate = float(subset["direction_correct"].mean())
+            avg_return = float(subset["signed_return"].mean())
+            checks[check_name] = {
+                "sample_size": int(len(subset)),
+                "hit_rate": hit_rate,
+                "average_return": avg_return,
+                "edge_vs_baseline_hit_rate": float(hit_rate - baseline["hit_rate"]),
+                "edge_vs_baseline_return": float(avg_return - baseline["average_return"]),
+            }
+
+        return {
+            "sample_size": int(len(frame)),
+            "baseline": baseline,
+            "checks": checks,
+        }
 
     def _entry_index(self, index: pd.DatetimeIndex, timestamp: datetime, lag_bars: int = 0) -> Optional[int]:
         position = index.searchsorted(pd.Timestamp(timestamp), side="left")

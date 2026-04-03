@@ -53,7 +53,8 @@ def aggregate_shipping_metrics(
         ("corridor_ids", "corridor"),
     ):
         metric_frames.append(_explode_zone_column(annotated, column, zone_type, freq))
-    metrics = pd.concat([frame for frame in metric_frames if not frame.empty], ignore_index=True) if metric_frames else pd.DataFrame()
+    usable_metric_frames = [frame for frame in metric_frames if not frame.empty]
+    metrics = pd.concat(usable_metric_frames, ignore_index=True) if usable_metric_frames else pd.DataFrame()
     if metrics.empty:
         return pd.DataFrame()
 

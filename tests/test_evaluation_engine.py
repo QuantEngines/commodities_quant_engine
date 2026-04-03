@@ -191,3 +191,48 @@ def test_drift_dashboard_uses_family_thresholds(tmp_path, monkeypatch):
     assert dashboard["thresholds"]["family"] == "bullion"
     assert abs(dashboard["thresholds"]["regime_alignment_drop"] - 0.06) < 1e-12
     assert any("regime alignment" in alert.lower() for alert in dashboard["alerts"])
+
+
+def test_evaluation_engine_reports_macro_incremental_edge_checks(tmp_path):
+    storage = LocalStorage(str(tmp_path))
+    engine = SignalEvaluationEngine(storage=storage)
+    price_data = make_uptrend_frame(periods=35)
+
+    snapshots = []
+    for idx in range(6, 24, 3):
+        direction = "long" if idx % 2 == 0 else "short"
+        snapshot = make_snapshot(f"sig-{idx}", price_data.index[idx].to_pydatetime(), direction)
+        if direction == "long":
+            snapshot.feature_vector.update(
+                {
+                    "ovx_zscore": -0.2,
+                    "ovx_shock_flag": 0.0,
+                    "bdi_zscore": 1.2,
+                    "bdi_momentum_20d": 0.06,
+                }
+            )
+        else:
+            snapshot.feature_vector.update(
+                {
+                    "ovx_zscore": 1.7,
+                    "ovx_shock_flag": 1.0,
+                    "bdi_zscore": -0.8,
+                    "bdi_momentum_20d": -0.05,
+                }
+            )
+        snapshots.append(snapshot)
+
+    artifact = engine.evaluate_signals(
+        commodity="GOLD",
+        price_data=price_data,
+        signal_snapshots=snapshots,
+        horizons=[1],
+        as_of_timestamp=price_data.index[-1].to_pydatetime(),
+        persist=False,
+    )
+
+    checks = artifact.scorecards["macro_incremental_edge_checks"]
+    assert checks["sample_size"] > 0
+    assert checks["baseline"]["sample_size"] > 0
+    assert "ovx_high" in checks["checks"]
+    assert "bdi_strong" in checks["checks"]

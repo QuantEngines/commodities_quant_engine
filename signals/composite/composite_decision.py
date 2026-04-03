@@ -169,6 +169,7 @@ class CompositeDecisionEngine:
             composite_score,
             event_explanations=event_payload["explanations"],
         )
+        macro_highlights = self._extract_macro_highlights(macro_features, as_of_timestamp)
         calibrated_regime_probability = self._calibrated_regime_probability(macro_regime.combined_label, macro_regime.probability)
         final_confidence = self._compute_final_confidence(composite_score, macro_confidence, shipping_context, quality_report.flag)
 
@@ -217,7 +218,7 @@ class CompositeDecisionEngine:
                 "shipping_features": shipping_context.shipping_features,
             },
             macro_regime_summary=macro_regime.combined_label,
-            macro_feature_highlights=self._extract_macro_highlights(macro_features, as_of_timestamp),
+            macro_feature_highlights=macro_highlights,
             macro_alignment_score=macro_confidence.macro_alignment_score,
             macro_conflict_score=macro_confidence.macro_conflict_score,
             macro_event_risk_flag=macro_confidence.event_risk_penalty > 0.25,
@@ -257,7 +258,23 @@ class CompositeDecisionEngine:
             key_drivers=supporting,
             key_risks=risks,
             component_scores=component_scores,
-            feature_vector={name: float(latest_features.get(name, 0.0)) for name in settings.signal.directional_feature_names},
+            feature_vector={
+                **{name: float(latest_features.get(name, 0.0)) for name in settings.signal.directional_feature_names},
+                **{
+                    name: float(macro_highlights.get(name, 0.0))
+                    for name in (
+                        "bdi_level",
+                        "bdi_zscore",
+                        "bdi_momentum_20d",
+                        "bdi_shock_flag",
+                        "ovx_level",
+                        "ovx_zscore",
+                        "ovx_momentum_10d",
+                        "ovx_shock_flag",
+                    )
+                    if name in macro_highlights
+                },
+            },
             model_version=str(self.parameter_state.get("version_id", "default")),
             config_version=settings.config_version,
             data_quality_flag=quality_report.flag,
@@ -272,6 +289,7 @@ class CompositeDecisionEngine:
                 "macro_risks": macro_confidence.key_macro_risks,
                 "shipping_drivers": shipping_context.key_shipping_drivers,
                 "shipping_notes": shipping_context.route_chokepoint_notes + shipping_context.port_congestion_notes,
+                "macro_feature_highlights": macro_highlights,
                 "directional_confidences": directional_confidences,
                 "event_explanations": event_payload["explanations"],
                 "event_overlay_weights": overlay_weights,

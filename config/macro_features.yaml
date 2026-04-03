@@ -216,6 +216,150 @@ features:
         frequency: "daily"
         missing_policy: "zero"
 
+  shipping_volatility:
+    enabled: true
+    transforms:
+      - name: "bdi_level"
+        source_series: ["BALTIC_DRY_INDEX"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "bdi_zscore"
+        source_series: ["BALTIC_DRY_INDEX"]
+        transform: "z_score"
+        window_days: 252
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "bdi_momentum_20d"
+        source_series: ["BALTIC_DRY_INDEX"]
+        transform: "pct_change"
+        window: 20
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "zero"
+
+      - name: "bdi_shock_flag"
+        source_series: ["BALTIC_DRY_INDEX"]
+        transform: "shock_flag"
+        threshold_abs_z: 2.0
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "zero"
+
+      - name: "bci_level"
+        source_series: ["BALTIC_CAPESIZE_INDEX"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "bci_zscore"
+        source_series: ["BALTIC_CAPESIZE_INDEX"]
+        transform: "z_score"
+        window_days: 252
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "bpi_level"
+        source_series: ["BALTIC_PANAMAX_INDEX"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "bsi_level"
+        source_series: ["BALTIC_SUPRAMAX_INDEX"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "bdti_level"
+        source_series: ["BALTIC_DIRTY_TANKER_INDEX"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "bdti_zscore"
+        source_series: ["BALTIC_DIRTY_TANKER_INDEX"]
+        transform: "z_score"
+        window_days: 252
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "bcti_level"
+        source_series: ["BALTIC_CLEAN_TANKER_INDEX"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "lng_rate_level"
+        source_series: ["LNG_CARRIER_RATE_PROXY"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "bulker_value_level"
+        source_series: ["BULKER_VESSEL_VALUE_PROXY"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "tanker_value_level"
+        source_series: ["TANKER_VESSEL_VALUE_PROXY"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "lng_carrier_value_level"
+        source_series: ["LNG_CARRIER_VESSEL_VALUE_PROXY"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "ovx_level"
+        source_series: ["CRUDE_OIL_VOLATILITY_INDEX"]
+        transform: "level"
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "ovx_zscore"
+        source_series: ["CRUDE_OIL_VOLATILITY_INDEX"]
+        transform: "z_score"
+        window_days: 252
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "forward_fill"
+
+      - name: "ovx_momentum_10d"
+        source_series: ["CRUDE_OIL_VOLATILITY_INDEX"]
+        transform: "pct_change"
+        window: 10
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "zero"
+
+      - name: "ovx_shock_flag"
+        source_series: ["CRUDE_OIL_VOLATILITY_INDEX"]
+        transform: "shock_flag"
+        threshold_abs_z: 2.0
+        lag_days: 0
+        frequency: "daily"
+        missing_policy: "zero"
+
 # Feature validation rules
 validation:
   max_missing_pct: 0.5  # Maximum allowed missing data percentage

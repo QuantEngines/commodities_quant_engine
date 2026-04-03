@@ -49,7 +49,8 @@ class EconomicSeriesIngestion:
         Returns:
             List of MacroSeries objects
         """
-        cache_key = f"macro_series_{series_name}_{start_date}_{end_date}"
+        canonical_series_name = self._resolve_series_alias(series_name)
+        cache_key = f"macro_series_{canonical_series_name}_{start_date}_{end_date}"
 
         if not force_refresh:
             cached_data = self._load_from_cache(cache_key)
@@ -61,7 +62,7 @@ class EconomicSeriesIngestion:
         # Try each source
         for source_name, source in self.sources.items():
             try:
-                series_data = source.fetch_macro_series(series_name, start_date, end_date)
+                series_data = source.fetch_macro_series(canonical_series_name, start_date, end_date)
                 all_series.extend(series_data)
                 print(f"Fetched {len(series_data)} points from {source_name}")
             except Exception as e:
@@ -118,10 +119,34 @@ class EconomicSeriesIngestion:
         """Get list of available series across all sources."""
         available = set()
         for source in self.sources.values():
-            # This would need to be implemented in each source
-            # For now, return configured series
-            pass
-        return list(settings.macro.series_mappings.keys())
+            series_catalog = getattr(source, "series_catalog", {}) or {}
+            fred_series = getattr(source, "fred_series", {}) or {}
+            available.update(series_catalog.keys())
+            available.update(fred_series.keys())
+
+        available.update(settings.macro.series_mappings.keys())
+        for mapping in settings.macro.series_mappings.values():
+            available.update(str(value) for value in mapping.values() if value)
+        return sorted(available)
+
+    def _resolve_series_alias(self, series_name: str) -> str:
+        """Resolve aliases like BDI/OVX to canonical internal series ids."""
+        normalized = str(series_name).upper()
+        mappings = settings.macro.series_mappings
+        if normalized in mappings:
+            return normalized
+
+        for canonical, alias_map in mappings.items():
+            canonical_normalized = str(canonical).upper()
+            if normalized == canonical_normalized:
+                return str(canonical)
+            aliases = {canonical_normalized}
+            aliases.update(str(key).upper() for key in alias_map.keys())
+            aliases.update(str(value).upper() for value in alias_map.values())
+            if normalized in aliases:
+                return str(canonical)
+
+        return str(series_name)
 
     def validate_series_data(self, series_list: List[MacroSeries]) -> Dict[str, Any]:
         """Validate ingested series data quality."""
