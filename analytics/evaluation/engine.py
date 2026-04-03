@@ -88,16 +88,18 @@ class SignalEvaluationEngine:
         rows = self.storage.load_jsonl(settings.storage.signal_store, commodity)
         if not rows:
             df = self.storage.load_domain_dataframe(settings.storage.signal_store, commodity)
-            rows = df.to_dict(orient="records") if not df.empty else []
+            if not df.empty:
+                df = df.drop_duplicates(subset=["signal_id"], keep="last")
+                rows = df.to_dict(orient="records")
+            else:
+                rows = []
         if not rows:
             return []
         snapshots = []
-        seen_signal_ids = set()
         for row in rows:
-            signal_id = row["signal_id"]
-            if signal_id in seen_signal_ids:
+            signal_id = row.get("signal_id")
+            if not signal_id:
                 continue
-            seen_signal_ids.add(signal_id)
             snapshots.append(
                 SignalSnapshot(
                     signal_id=signal_id,
@@ -138,7 +140,10 @@ class SignalEvaluationEngine:
     ) -> List[SignalEvaluationRecord]:
         closes = price_data["close"].astype(float)
         returns = closes.pct_change().fillna(0.0)
-        rolling_median_volume = price_data["volume"].rolling(20, min_periods=5).median() if "volume" in price_data.columns else pd.Series(index=price_data.index, dtype=float)
+        try:
+            rolling_median_volume = price_data["volume"].astype(float).rolling(20, min_periods=5).median()
+        except (KeyError, ValueError):
+            rolling_median_volume = pd.Series(index=price_data.index, dtype=float)
         records: List[SignalEvaluationRecord] = []
         entry_lag_bars = max(0, int(settings.evaluation.entry_lag_bars))
         for snapshot in sorted(snapshots, key=lambda item: item.timestamp):

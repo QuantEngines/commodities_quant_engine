@@ -177,6 +177,7 @@ class ResearchWorkflow:
         latest_row = flattened_rows[-1]
         divergence_values = [float(row["bdi_shipping_divergence"]) for row in flattened_rows]
         active_rows = [row for row in flattened_rows if float(row["bdi_benchmark_active"]) > 0.5]
+        mean_divergence = float(sum(abs(value) for value in divergence_values) / len(divergence_values)) if divergence_values else 0.0
         summary_payload = {
             "signal_id": signal_id,
             "commodity": commodity,
@@ -193,7 +194,7 @@ class ResearchWorkflow:
             "latest_shipping_market_stress_score": latest_row["shipping_market_stress_score"],
             "latest_shipping_market_divergence": latest_row["shipping_market_divergence"],
             "max_abs_bdi_shipping_divergence": max((abs(value) for value in divergence_values), default=0.0),
-            "mean_abs_bdi_shipping_divergence": float(sum(abs(value) for value in divergence_values) / len(divergence_values)),
+            "mean_abs_bdi_shipping_divergence": mean_divergence,
             "history_path": str(history_path),
             "raw_path": str(raw_path),
         }

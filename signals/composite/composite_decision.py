@@ -260,20 +260,7 @@ class CompositeDecisionEngine:
             component_scores=component_scores,
             feature_vector={
                 **{name: float(latest_features.get(name, 0.0)) for name in settings.signal.directional_feature_names},
-                **{
-                    name: float(macro_highlights.get(name, 0.0))
-                    for name in (
-                        "bdi_level",
-                        "bdi_zscore",
-                        "bdi_momentum_20d",
-                        "bdi_shock_flag",
-                        "ovx_level",
-                        "ovx_zscore",
-                        "ovx_momentum_10d",
-                        "ovx_shock_flag",
-                    )
-                    if name in macro_highlights
-                },
+                **{name: float(value) for name, value in macro_highlights.items()},
             },
             model_version=str(self.parameter_state.get("version_id", "default")),
             config_version=settings.config_version,

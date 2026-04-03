@@ -18,6 +18,12 @@ from commodities_quant_engine.config.settings import settings
 from commodities_quant_engine.data.ingestion import market_data_service
 from commodities_quant_engine.data.storage.local import LocalStorage
 from commodities_quant_engine.workflow import ResearchWorkflow
+from commodities_quant_engine.reporting.signal_formatter import (
+    format_signal_summary,
+    format_multi_commodity_table,
+    compact_list,
+    format_optional_number as fmt_number,
+)
 
 FEATURED_COMMODITIES = [
     "GOLD",
@@ -285,59 +291,24 @@ def format_summary(results: Dict[str, Any]) -> str:
     event_features = diagnostics.get("event_intelligence_features", {})
     regime_probability = _primary_regime_probability(suggestion)
     lines = [
-        "Commodities Quant Engine Local Run",
-        f"Commodity: {suggestion.commodity}",
-        f"Timestamp: {suggestion.timestamp}",
-        f"Venue: {suggestion.exchange} | contract={suggestion.active_contract} | signal_id={suggestion.signal_id}",
-        (
-            f"Decision: {suggestion.final_category} | direction={suggestion.preferred_direction} "
-            f"| confidence={suggestion.confidence_score:.2f} | score={suggestion.composite_score:.2f}"
-        ),
-        (
-            f"Positioning: entry_style={suggestion.suggested_entry_style} | horizon={suggestion.suggested_holding_horizon}D "
-            f"| data_quality={suggestion.data_quality_flag}"
-        ),
-        (
-            f"Regime: {suggestion.regime_label} | p={_format_optional_number(regime_probability, digits=2)} "
-            f"| macro_align={_format_optional_number(suggestion.macro_alignment_score, digits=2)} "
-            f"| macro_conflict={_format_optional_number(suggestion.macro_conflict_score, digits=2)} "
-            f"| event_risk={'high' if suggestion.macro_event_risk_flag else 'low'} "
-            f"| macro_conf_adj={_format_optional_number(suggestion.macro_confidence_adjustment, digits=2, signed=True)}"
-        ),
-        f"Directional Term Structure: {_format_directional_scores(suggestion.directional_scores)}",
-        f"Directional Confidence: {_format_directional_scores(directional_confidences)}",
-        f"Component Stack: {_format_score_map(component_scores, limit=5)}",
-        f"Feature Highlights: {_format_score_map(feature_vector, limit=5)}",
-        f"Event Overlay: {_format_score_map(event_features, limit=4)}",
-        f"Drivers: {_compact_list(suggestion.key_supporting_drivers, limit=3)}",
-        f"Contradictions: {_compact_list(suggestion.key_contradictory_drivers, limit=2)}",
-        f"Risks: {_compact_list(suggestion.principal_risks, limit=3)}",
-        (
-            f"Evaluation: sample={evaluation.summary_metrics.get('sample_size', 0)} "
-            f"| hit_rate={evaluation.summary_metrics.get('overall_hit_rate', 0.0):.2%} "
-            f"| avg_return={evaluation.summary_metrics.get('overall_average_return', 0.0):.4f} "
-            f"| rank_ic={float(evaluation.summary_metrics.get('overall_rank_ic', 0.0)):.2f} "
-            f"| brier={float(evaluation.summary_metrics.get('overall_brier_score', 0.0)):.3f}"
-        ),
-        (
-            f"Event Split: event_hit={_format_optional_pct(evaluation.summary_metrics.get('event_window_hit_rate'))} "
-            f"| non_event_hit={_format_optional_pct(evaluation.summary_metrics.get('non_event_hit_rate'))}"
-        ),
-        (
-            f"Adaptation: mode={adaptation.mode} | promoted={'yes' if adaptation.promoted else 'no'} "
-            f"| approved={'yes' if adaptation.approved else 'no'}"
-        ),
-        f"Adaptation Reason: {adaptation.reason}",
-        f"Model Lineage: model={snapshot.model_version} | config={snapshot.config_version}",
+        "═" * 70,
+        "COMMODITIES QUANT ENGINE SIGNAL ANALYSIS".center(70),
+        "═" * 70,
     ]
-    best_horizon = _best_horizon_line(evaluation)
-    if best_horizon:
-        lines.append(best_horizon)
+    lines.append(format_signal_summary(suggestion, evaluation))
+    
+    lines.append("")
+    lines.append(f"Adaptation: mode={adaptation.mode} | promoted={'yes' if adaptation.promoted else 'no'} | approved={'yes' if adaptation.approved else 'no'}")
+    lines.append(f"Adaptation Reason: {adaptation.reason}")
     if adaptation.candidate_version_id:
         lines.append(f"Candidate Version: {adaptation.candidate_version_id}")
+    
     if evaluation.degradation_alerts:
-        lines.append("Degradation Alerts:")
-        lines.extend(f"- {alert}" for alert in evaluation.degradation_alerts)
+        lines.append("")
+        lines.append(f"⚠ Degradation Alerts ({len(evaluation.degradation_alerts)}):")
+        for alert in evaluation.degradation_alerts[:5]:
+            lines.append(f"  • {alert}")
+    
     return "\n".join(lines)
 
 
@@ -644,10 +615,7 @@ def run_live_loop(
 
 
 def format_multi_commodity_report(entries: List[Dict[str, Any]], heading: str) -> str:
-    lines = [heading]
-    for entry in entries:
-        lines.append(format_signal_row(entry["commodity"], entry["results"], entry["status"], entry["message"]))
-    return "\n".join(lines)
+    return format_multi_commodity_table(entries)
 
 
 def parse_commodity_selection(selection: str, available: List[str]) -> List[str]:

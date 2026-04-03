@@ -1,4 +1,4 @@
-from ..run_local import (
+from ..main import (
     build_demo_price_data,
     build_parser,
     format_multi_commodity_report,
@@ -28,9 +28,9 @@ def test_run_local_demo_cycle(tmp_path):
     )
 
     summary = format_summary(results)
-    assert "Commodity: GOLD" in summary
-    assert "Directional Term Structure:" in summary
-    assert "Feature Highlights:" in summary
+    assert "GOLD" in summary
+    assert "COMMODITIES QUANT ENGINE" in summary
+    assert summary.count("Signal Metadata") >= 1
     assert results["signal_package"].suggestion.signal_id
     assert results["evaluation"].summary_metrics["sample_size"] >= 1
 
@@ -70,9 +70,10 @@ def test_format_multi_commodity_report_includes_signal_and_skip_lines(tmp_path):
         ],
         "Configured Commodities And Latest Signals",
     )
-    assert "Configured Commodities And Latest Signals" in report
-    assert "GOLD:" in report
-    assert "COPPER: skipped." in report
+    assert "Commodity Results Summary" in report
+    assert "GOLD" in report
+    assert "COPPER" in report
+    assert "✓" in report or "✗" in report
 
 
 def test_parser_defaults_allow_multi_commodity_launcher_mode():
