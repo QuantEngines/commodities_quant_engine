@@ -507,9 +507,10 @@ class CompositeDecisionEngine:
             + shipping_context.shipping_support_boost
             - shipping_context.shipping_data_quality_penalty * 0.5
         )
+        inefficiency_component = float(-np.tanh(float(inefficiency_score) / 2.5))
         return {
             "directional": directional_component * directional_alignment * max(0.5, average_confidence) + shipping_context.shipping_directional_bias,
-            "inefficiency": float(-inefficiency_score),
+            "inefficiency": inefficiency_component,
             "regime": regime_component,
             "macro": macro_component,
             "shipping": shipping_component,
@@ -537,7 +538,7 @@ class CompositeDecisionEngine:
         macro_confidence: MacroConfidenceOverlay,
         shipping_context: ShippingSignalContext,
     ) -> Tuple[str, str, str, int]:
-        effective_score = composite_score + macro_confidence.final_confidence_adjustment + shipping_context.shipping_support_boost - shipping_context.shipping_data_quality_penalty * 0.1
+        effective_score = composite_score
         preferred_horizon = self._preferred_horizon(directional_scores, effective_score)
         if signal_agreement < 0.25 or risk.total_penalty > 1.05:
             return "Regime Conflict / Avoid", "neutral", "wait", 0
@@ -585,11 +586,13 @@ class CompositeDecisionEngine:
         vol20 = close.pct_change().rolling(20, min_periods=5).std(ddof=0)
         latest_vol = float(vol20.iloc[-1]) if not pd.isna(vol20.iloc[-1]) else 0.01
         latest_vol = max(0.005, latest_vol)
-        price_extension = float((close.iloc[-1] - ma20.iloc[-1]) / (close.iloc[-1] * latest_vol)) if not pd.isna(ma20.iloc[-1]) else 0.0
+        price_extension = float((close.iloc[-1] - ma20.iloc[-1]) / (ma20.iloc[-1] * latest_vol)) if not pd.isna(ma20.iloc[-1]) and abs(float(ma20.iloc[-1])) > 1e-12 else 0.0
 
         directional_sign = 1.0 if "bullish" in directional_bias else (-1.0 if "bearish" in directional_bias else 0.0)
         extension_against_entry = directional_sign * price_extension
-        stretch_penalty = abs(float(inefficiency_score)) * 0.45 + max(0.0, extension_against_entry) * 0.30 + max(0.0, latest_vol - 0.03) * 6.0
+        inefficiency_excess = max(0.0, abs(float(inefficiency_score)) - 0.8)
+        extension_excess = max(0.0, extension_against_entry - 0.8)
+        stretch_penalty = inefficiency_excess * 0.24 + extension_excess * 0.16 + max(0.0, latest_vol - 0.03) * 3.0
         entry_score = float(max(0.0, min(1.0, 1.0 - stretch_penalty)))
 
         if entry_score >= 0.85:
@@ -649,28 +652,33 @@ class CompositeDecisionEngine:
         return float(max(0.0, min(1.0, adjusted)))
 
     def _build_regime_probability_map(self, selected_regime: str, selected_probability: float) -> Dict[str, float]:
+        calibration = self.parameter_state.get("regime_calibration", {})
+        regime_map = calibration.get("regime_map", {}) if isinstance(calibration, dict) else {}
+        if isinstance(regime_map, dict) and regime_map:
+            normalized = {
+                str(name): float(np.clip(float(prob), 0.0, 1.0))
+                for name, prob in regime_map.items()
+            }
+            normalized[selected_regime] = float(np.clip(selected_probability, 0.05, 0.95))
+            total = sum(normalized.values())
+            if total > 0:
+                normalized = {name: value / total for name, value in normalized.items()}
+            ordered = sorted(normalized.items(), key=lambda item: item[1], reverse=True)
+            top = dict(ordered[:3])
+            if selected_regime not in top:
+                # Ensure displayed regime always includes the selected state.
+                top[selected_regime] = normalized.get(selected_regime, float(np.clip(selected_probability, 0.05, 0.95)))
+            total_top = sum(top.values())
+            if total_top > 0:
+                top = {name: value / total_top for name, value in top.items()}
+            return top
+
         selected = float(np.clip(selected_probability, 0.05, 0.95))
         remainder = max(0.0, 1.0 - selected)
-        candidates = [
-            "trend_following_bullish",
-            "mean_reverting_rangebound",
-            "risk_off",
-            "trend_following_bearish",
-            "volatile_reversal",
-            "neutral",
-        ]
-        alternatives = [name for name in candidates if name != selected_regime][:2]
-        if not alternatives:
-            return {selected_regime: selected}
-        alt_one = remainder * 0.6
-        alt_two = remainder - alt_one
-        probability_map = {
+        return {
             selected_regime: selected,
-            alternatives[0]: alt_one,
+            "other_regimes": remainder,
         }
-        if len(alternatives) > 1:
-            probability_map[alternatives[1]] = alt_two
-        return probability_map
 
     def _label_component_contribution(self, component_name: str, value: float) -> str:
         magnitude = abs(float(value))
@@ -725,7 +733,10 @@ class CompositeDecisionEngine:
         contradictory: List[str] = []
         avg_directional = self._weighted_directional_score(directional_scores)
         supporting.append(f"Directional score stack: {avg_directional:.2f}")
-        supporting.append(f"Entry quality: {entry_quality}")
+        if entry_quality in {"Excellent", "Good", "Fair"}:
+            supporting.append(f"Entry quality: {entry_quality}")
+        else:
+            contradictory.append(f"Entry quality is {entry_quality}, suggesting weaker execution timing")
         if abs(inefficiency_score) < 0.8:
             supporting.append(f"Pricing inefficiency is contained at {inefficiency_score:.2f} z")
         if inefficiency_score < -0.5:

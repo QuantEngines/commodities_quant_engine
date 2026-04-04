@@ -64,6 +64,33 @@ The signal engine now uses a structured decision hierarchy instead of a single f
 
 This improves coherence between internal model components and the final recommendation presented to users.
 
+### Composite Math Notes (Conservative Update)
+
+The composite engine was reviewed and adjusted conservatively with two goals: keep stable behavior that already worked, and fix only proven pathologies.
+
+Preserved behavior:
+
+- directional signal generation, horizon weighting, and clipping remain unchanged
+- macro/shipping context engines remain unchanged
+- risk-penalty construction remains additive and bounded
+- calibration hooks (`confidence_calibration`, `regime_calibration`) remain in place
+
+Targeted fixes applied:
+
+- removed score double-counting in final action classification by using composite score directly for action thresholding
+- reduced inefficiency dominance by replacing a raw linear term with a bounded nonlinearity (`tanh`)
+- recalibrated entry-quality penalties to avoid systematic over-triggering of `Very Poor`
+- replaced fabricated top-regime alternatives with evidence-first mapping:
+  - use calibration map probabilities when available
+  - otherwise use selected regime probability plus residual `other_regimes` mass
+
+Interpretation split:
+
+- direction is driven by directional stack and context
+- entry quality is driven by inefficiency, extension, and volatility
+- tradeability confidence blends direction, entry quality, agreement, and data quality, then applies calibration
+- risk acts as penalty/gating, not directional reversal
+
 ### Entry Quality
 
 `Entry Quality` is now a first-class decision field describing whether the current price location is attractive for execution.

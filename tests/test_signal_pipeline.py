@@ -86,6 +86,7 @@ def test_composite_engine_generates_auditable_signal_package():
     assert 0.0 <= float(package.suggestion.data_quality_confidence or 0.0) <= 1.0
     assert package.suggestion.component_contributions
     assert len(package.suggestion.principal_risks) >= 1
+    assert abs(float(package.suggestion.diagnostics["component_scores"]["inefficiency"])) <= 1.0
 
 
 def test_regime_probability_stack_is_present_and_selected_has_positive_probability():
@@ -96,6 +97,31 @@ def test_regime_probability_stack_is_present_and_selected_has_positive_probabili
     assert len(probabilities) >= 2
     assert package.suggestion.regime_label in probabilities
     assert float(probabilities[package.suggestion.regime_label]) > 0.0
+    assert "other_regimes" in probabilities
+    assert abs(sum(float(v) for v in probabilities.values()) - 1.0) < 1e-9
+
+
+def test_regime_probability_stack_uses_calibration_map_when_available():
+    engine = CompositeDecisionEngine(
+        parameter_state={
+            "regime_calibration": {
+                "regime_map": {
+                    "trend_following_bullish": 0.3,
+                    "mean_reverting_rangebound": 0.25,
+                    "risk_off": 0.2,
+                    "neutral": 0.15,
+                    "trend_following_bearish": 0.1,
+                }
+            }
+        }
+    )
+    package = engine.generate_signal_package(make_price_frame(), "GOLD")
+    probabilities = package.suggestion.regime_probabilities
+
+    assert 2 <= len(probabilities) <= 4
+    assert package.suggestion.regime_label in probabilities
+    assert "other_regimes" not in probabilities
+    assert abs(sum(float(v) for v in probabilities.values()) - 1.0) < 1e-9
 
 
 def test_stretched_price_can_force_wait_style_recommendation_with_explanation_override():
