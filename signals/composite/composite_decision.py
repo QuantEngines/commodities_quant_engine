@@ -149,29 +149,68 @@ class CompositeDecisionEngine:
             component_scores["regime"] + event_regime_adjustment(event_payload["features"]) * float(overlay_weights.get("regime_weight", settings.nlp_event.regime_overlay_weight))
         )
         composite_score = self._aggregate_components(component_scores)
-        category, direction, entry_style, horizon = self._classify_suggestion(composite_score, directional_scores, risk_penalty, macro_confidence, shipping_context)
+        directional_bias = self._directional_bias_label(directional_scores)
+        entry_quality, entry_quality_score = self._assess_entry_quality(data, inefficiency.deviation_z, directional_bias)
+        signal_agreement = self._signal_agreement_score(directional_scores, macro_confidence, shipping_context)
+        category, direction, entry_style, horizon = self._classify_suggestion(
+            composite_score,
+            directional_scores,
+            directional_bias,
+            entry_quality,
+            signal_agreement,
+            risk_penalty,
+            macro_confidence,
+            shipping_context,
+        )
         supporting, contradictory = self._extract_drivers(
             macro_regime.combined_label,
             inefficiency.deviation_z,
             directional_scores,
+            directional_bias,
+            entry_quality,
+            signal_agreement,
             macro_confidence,
             risk_penalty,
             shipping_context,
         )
-        risks = self._identify_risks(inefficiency.instability_warning, risk_penalty, macro_confidence, shipping_context)
+        risks = self._identify_risks(inefficiency.instability_warning, risk_penalty, macro_confidence, shipping_context, directional_bias, entry_quality)
+        dominant_component, override_reason = self._dominant_component_and_override(
+            component_scores=component_scores,
+            entry_quality=entry_quality,
+            risk_penalty=risk_penalty,
+            signal_agreement=signal_agreement,
+            recommendation=category,
+        )
         explanation = self._generate_explanation(
             macro_regime.combined_label,
             directional_scores,
+            directional_bias,
+            entry_quality,
             inefficiency.deviation_z,
             risk_penalty,
+            signal_agreement,
             macro_confidence,
             shipping_context,
             composite_score,
+            recommendation=category,
+            override_reason=override_reason,
             event_explanations=event_payload["explanations"],
         )
         macro_highlights = self._extract_macro_highlights(macro_features, as_of_timestamp)
         calibrated_regime_probability = self._calibrated_regime_probability(macro_regime.combined_label, macro_regime.probability)
-        final_confidence = self._compute_final_confidence(composite_score, macro_confidence, shipping_context, quality_report.flag)
+        regime_probabilities = self._build_regime_probability_map(macro_regime.combined_label, calibrated_regime_probability)
+        directional_confidence = self._compute_directional_confidence(directional_confidences, directional_scores)
+        data_quality_confidence = self._compute_data_quality_confidence(quality_report.flag)
+        raw_tradeability_confidence = self._compute_tradeability_confidence(
+            directional_confidence=directional_confidence,
+            entry_quality_score=entry_quality_score,
+            risk_penalty=risk_penalty,
+            signal_agreement=signal_agreement,
+            data_quality_confidence=data_quality_confidence,
+        )
+        tradeability_confidence = self._apply_confidence_calibration(raw_tradeability_confidence)
+        final_confidence = tradeability_confidence
+        component_contributions = {name: self._label_component_contribution(name, score) for name, score in component_scores.items()}
 
         active_contract = contract_master.get_active_contract(commodity, as_of_timestamp.date())
         signal_id = self._build_signal_id(commodity, as_of_timestamp)
@@ -181,12 +220,24 @@ class CompositeDecisionEngine:
             exchange=active_contract.exchange if active_contract else settings.commodities[commodity].exchange,
             active_contract=active_contract.symbol if active_contract else commodity,
             regime_label=macro_regime.combined_label,
-            regime_probabilities={macro_regime.combined_label: calibrated_regime_probability},
+            regime_probabilities=regime_probabilities,
             directional_scores=directional_scores,
             inefficiency_score=inefficiency.deviation_z,
             risk_penalty=risk_penalty.total_penalty,
             composite_score=composite_score,
             final_category=category,
+            directional_bias=directional_bias,
+            entry_quality=entry_quality,
+            trade_recommendation=category,
+            directional_confidence=directional_confidence,
+            tradeability_confidence=tradeability_confidence,
+            data_quality_confidence=data_quality_confidence,
+            component_contributions=component_contributions,
+            dominant_component=dominant_component,
+            override_reason=override_reason,
+            supportive_signals=supporting,
+            contradictory_signals=contradictory,
+            key_risks=risks,
             preferred_direction=direction,
             suggested_entry_style=entry_style,
             suggested_holding_horizon=horizon,
@@ -208,6 +259,16 @@ class CompositeDecisionEngine:
                 "contract_is_fallback": active_contract.is_fallback if active_contract else True,
                 "raw_regime_probability": float(macro_regime.probability),
                 "calibrated_regime_probability": float(calibrated_regime_probability),
+                "regime_probabilities": regime_probabilities,
+                "directional_bias": directional_bias,
+                "entry_quality": entry_quality,
+                "signal_agreement": float(signal_agreement),
+                "directional_confidence": float(directional_confidence),
+                "tradeability_confidence": float(tradeability_confidence),
+                "data_quality_confidence": float(data_quality_confidence),
+                "component_contributions": component_contributions,
+                "dominant_component": dominant_component,
+                "override_reason": override_reason,
                 "confidence_calibrated": bool(self.parameter_state.get("confidence_calibration")),
                 "event_intelligence_features": event_payload["features"],
                 "event_intelligence_diagnostics": event_payload["diagnostics"],
@@ -469,43 +530,214 @@ class CompositeDecisionEngine:
         self,
         composite_score: float,
         directional_scores: Dict[int, float],
+        directional_bias: str,
+        entry_quality: str,
+        signal_agreement: float,
         risk: RiskPenalty,
         macro_confidence: MacroConfidenceOverlay,
         shipping_context: ShippingSignalContext,
     ) -> Tuple[str, str, str, int]:
         effective_score = composite_score + macro_confidence.final_confidence_adjustment + shipping_context.shipping_support_boost - shipping_context.shipping_data_quality_penalty * 0.1
         preferred_horizon = self._preferred_horizon(directional_scores, effective_score)
-        if abs(effective_score) < settings.composite.neutral_threshold or risk.total_penalty > 0.95:
+        if signal_agreement < 0.25 or risk.total_penalty > 1.05:
+            return "Regime Conflict / Avoid", "neutral", "wait", 0
+        if directional_bias == "neutral" or abs(effective_score) < settings.composite.neutral_threshold:
             return "Neutral / No Edge", "neutral", "wait", 0
-        if effective_score >= settings.composite.strong_threshold:
-            return "Strong Long Candidate", "long", "market", preferred_horizon
-        if effective_score >= settings.composite.weak_threshold:
-            return "Long Bias, wait for pullback", "long", "limit", preferred_horizon
-        if effective_score <= -settings.composite.strong_threshold:
-            return "Strong Short Candidate", "short", "market", preferred_horizon
-        if effective_score <= -settings.composite.weak_threshold:
-            return "Short Bias, wait for rally", "short", "limit", preferred_horizon
-        return "Weak Relative Edge", "neutral", "wait", settings.evaluation.primary_horizon
+
+        long_bias = directional_bias in {"bullish", "strong_bullish"}
+        short_bias = directional_bias in {"bearish", "strong_bearish"}
+
+        if long_bias:
+            if effective_score >= settings.composite.strong_threshold and entry_quality in {"Excellent", "Good"} and risk.total_penalty < 0.65:
+                return "Strong Long Candidate", "long", "market", preferred_horizon
+            if effective_score >= settings.composite.weak_threshold and entry_quality in {"Excellent", "Good", "Fair"}:
+                return "Long Bias", "long", "limit", preferred_horizon
+            if effective_score >= settings.composite.weak_threshold and entry_quality in {"Poor", "Very Poor"}:
+                return "Long Bias / Wait for Pullback", "long", "limit", preferred_horizon
+            return "Watchlist Long", "long", "wait", preferred_horizon
+
+        if short_bias:
+            if effective_score <= -settings.composite.strong_threshold and entry_quality in {"Excellent", "Good"} and risk.total_penalty < 0.65:
+                return "Strong Short Candidate", "short", "market", preferred_horizon
+            if effective_score <= -settings.composite.weak_threshold and entry_quality in {"Excellent", "Good", "Fair"}:
+                return "Short Bias", "short", "limit", preferred_horizon
+            if effective_score <= -settings.composite.weak_threshold and entry_quality in {"Poor", "Very Poor"}:
+                return "Short Bias / Wait for Rally", "short", "limit", preferred_horizon
+            return "Watchlist Short", "short", "wait", preferred_horizon
+
+        return "Neutral / No Edge", "neutral", "wait", settings.evaluation.primary_horizon
+
+    def _directional_bias_label(self, directional_scores: Dict[int, float]) -> str:
+        weighted = self._weighted_directional_score(directional_scores)
+        if weighted >= settings.composite.strong_threshold * 0.55:
+            return "strong_bullish"
+        if weighted >= settings.composite.neutral_threshold:
+            return "bullish"
+        if weighted <= -settings.composite.strong_threshold * 0.55:
+            return "strong_bearish"
+        if weighted <= -settings.composite.neutral_threshold:
+            return "bearish"
+        return "neutral"
+
+    def _assess_entry_quality(self, data: pd.DataFrame, inefficiency_score: float, directional_bias: str) -> Tuple[str, float]:
+        close = data["close"].astype(float)
+        ma20 = close.rolling(20, min_periods=5).mean()
+        vol20 = close.pct_change().rolling(20, min_periods=5).std(ddof=0)
+        latest_vol = float(vol20.iloc[-1]) if not pd.isna(vol20.iloc[-1]) else 0.01
+        latest_vol = max(0.005, latest_vol)
+        price_extension = float((close.iloc[-1] - ma20.iloc[-1]) / (close.iloc[-1] * latest_vol)) if not pd.isna(ma20.iloc[-1]) else 0.0
+
+        directional_sign = 1.0 if "bullish" in directional_bias else (-1.0 if "bearish" in directional_bias else 0.0)
+        extension_against_entry = directional_sign * price_extension
+        stretch_penalty = abs(float(inefficiency_score)) * 0.45 + max(0.0, extension_against_entry) * 0.30 + max(0.0, latest_vol - 0.03) * 6.0
+        entry_score = float(max(0.0, min(1.0, 1.0 - stretch_penalty)))
+
+        if entry_score >= 0.85:
+            return "Excellent", entry_score
+        if entry_score >= 0.70:
+            return "Good", entry_score
+        if entry_score >= 0.50:
+            return "Fair", entry_score
+        if entry_score >= 0.30:
+            return "Poor", entry_score
+        return "Very Poor", entry_score
+
+    def _signal_agreement_score(
+        self,
+        directional_scores: Dict[int, float],
+        macro_confidence: MacroConfidenceOverlay,
+        shipping_context: ShippingSignalContext,
+    ) -> float:
+        alignment = self._directional_alignment(directional_scores)
+        macro_headwind = max(0.0, macro_confidence.macro_conflict_score - macro_confidence.macro_alignment_score)
+        shipping_headwind = max(0.0, shipping_context.shipping_conflict_score - shipping_context.shipping_alignment_score)
+        agreement = alignment - 0.35 * macro_headwind - 0.30 * shipping_headwind
+        return float(max(0.0, min(1.0, agreement)))
+
+    def _compute_directional_confidence(self, directional_confidences: Dict[int, float], directional_scores: Dict[int, float]) -> float:
+        if not directional_confidences:
+            return 0.0
+        avg = float(np.mean(list(directional_confidences.values())))
+        alignment = self._directional_alignment(directional_scores)
+        return float(max(0.0, min(1.0, avg * (0.65 + 0.35 * alignment))))
+
+    def _compute_data_quality_confidence(self, data_quality_flag: str) -> float:
+        if data_quality_flag == "good":
+            return 0.95
+        if data_quality_flag == "stale":
+            return 0.65
+        if data_quality_flag == "incomplete":
+            return 0.40
+        return 0.55
+
+    def _compute_tradeability_confidence(
+        self,
+        directional_confidence: float,
+        entry_quality_score: float,
+        risk_penalty: RiskPenalty,
+        signal_agreement: float,
+        data_quality_confidence: float,
+    ) -> float:
+        risk_haircut = max(0.0, min(0.85, risk_penalty.total_penalty / 1.5))
+        blended = (
+            0.40 * directional_confidence
+            + 0.30 * entry_quality_score
+            + 0.20 * signal_agreement
+            + 0.10 * data_quality_confidence
+        )
+        adjusted = blended * (1.0 - 0.55 * risk_haircut)
+        return float(max(0.0, min(1.0, adjusted)))
+
+    def _build_regime_probability_map(self, selected_regime: str, selected_probability: float) -> Dict[str, float]:
+        selected = float(np.clip(selected_probability, 0.05, 0.95))
+        remainder = max(0.0, 1.0 - selected)
+        candidates = [
+            "trend_following_bullish",
+            "mean_reverting_rangebound",
+            "risk_off",
+            "trend_following_bearish",
+            "volatile_reversal",
+            "neutral",
+        ]
+        alternatives = [name for name in candidates if name != selected_regime][:2]
+        if not alternatives:
+            return {selected_regime: selected}
+        alt_one = remainder * 0.6
+        alt_two = remainder - alt_one
+        probability_map = {
+            selected_regime: selected,
+            alternatives[0]: alt_one,
+        }
+        if len(alternatives) > 1:
+            probability_map[alternatives[1]] = alt_two
+        return probability_map
+
+    def _label_component_contribution(self, component_name: str, value: float) -> str:
+        magnitude = abs(float(value))
+        sign = "Positive" if value >= 0 else "Negative"
+        if component_name == "risk":
+            sign = "Negative"
+        if magnitude >= 1.0:
+            level = "Strong"
+        elif magnitude >= 0.45:
+            level = "Moderate"
+        elif magnitude >= 0.15:
+            level = "Mild"
+        else:
+            level = "Neutral"
+        if level == "Neutral":
+            return "Neutral"
+        return f"{level} {sign}"
+
+    def _dominant_component_and_override(
+        self,
+        component_scores: Dict[str, float],
+        entry_quality: str,
+        risk_penalty: RiskPenalty,
+        signal_agreement: float,
+        recommendation: str,
+    ) -> Tuple[str, Optional[str]]:
+        dominant = max(component_scores.items(), key=lambda item: abs(float(item[1])))[0] if component_scores else "none"
+        override_reason: Optional[str] = None
+        if recommendation in {"Long Bias / Wait for Pullback", "Short Bias / Wait for Rally"}:
+            override_reason = "Trade setup deferred because directional edge exists but entry quality is stretched."
+        elif recommendation == "Regime Conflict / Avoid" or signal_agreement < 0.25:
+            override_reason = "Trade not recommended due to conflicting directional, macro, or shipping signals."
+        elif entry_quality in {"Poor", "Very Poor"}:
+            override_reason = "Trade timing is unattractive due to stretched pricing relative to fair-value context."
+        elif risk_penalty.total_penalty > 0.95:
+            override_reason = "Risk overlay dominates with elevated penalty, suppressing actionable trade setup."
+        return dominant, override_reason
 
     def _extract_drivers(
         self,
         regime_label: str,
         inefficiency_score: float,
         directional_scores: Dict[int, float],
+        directional_bias: str,
+        entry_quality: str,
+        signal_agreement: float,
         macro_confidence: MacroConfidenceOverlay,
         risk: RiskPenalty,
         shipping_context: ShippingSignalContext,
     ) -> Tuple[List[str], List[str]]:
-        supporting = [f"Regime: {regime_label}"]
+        supporting = [f"Regime context: {regime_label}", f"Directional bias: {directional_bias}"]
         contradictory: List[str] = []
         avg_directional = self._weighted_directional_score(directional_scores)
-        supporting.append(f"Average directional score: {avg_directional:.2f}")
-        if abs(inefficiency_score) > 1.0:
-            supporting.append(f"Deviation from fair value is {inefficiency_score:.2f} z")
+        supporting.append(f"Directional score stack: {avg_directional:.2f}")
+        supporting.append(f"Entry quality: {entry_quality}")
+        if abs(inefficiency_score) < 0.8:
+            supporting.append(f"Pricing inefficiency is contained at {inefficiency_score:.2f} z")
+        if inefficiency_score < -0.5:
+            contradictory.append(f"Inefficiency is negative at {inefficiency_score:.2f} z and can suppress immediate entry")
+        if abs(inefficiency_score) > 1.2:
+            contradictory.append(f"Price appears stretched versus fair-value context ({inefficiency_score:.2f} z)")
         if macro_confidence.key_macro_drivers:
             supporting.extend(macro_confidence.key_macro_drivers[:2])
         if shipping_context.key_shipping_drivers:
             supporting.extend(shipping_context.key_shipping_drivers[:2])
+        if signal_agreement < 0.45:
+            contradictory.append(f"Signal agreement is low ({signal_agreement:.2f}), indicating cross-component conflict")
         if risk.total_penalty > 0.4:
             contradictory.append(f"Aggregate risk penalty is elevated at {risk.total_penalty:.2f}")
         if macro_confidence.macro_conflict_score > 0.25:
@@ -520,10 +752,14 @@ class CompositeDecisionEngine:
         risk: RiskPenalty,
         macro_confidence: MacroConfidenceOverlay,
         shipping_context: ShippingSignalContext,
+        directional_bias: str,
+        entry_quality: str,
     ) -> List[str]:
         risks = []
         if inefficiency_instability:
             risks.append("Fair-value relationship is unstable")
+        if entry_quality in {"Poor", "Very Poor"}:
+            risks.append("Entry quality is weak; waiting for better price location is prudent")
         if risk.volatility_spike > 0.25:
             risks.append("Recent realized volatility is elevated")
         if risk.signal_disagreement > 0.5:
@@ -533,17 +769,27 @@ class CompositeDecisionEngine:
             risks.append("Shipping coverage is sparse or noisy")
         if shipping_context.route_chokepoint_notes:
             risks.append(shipping_context.route_chokepoint_notes[0])
+        if not risks:
+            if directional_bias == "neutral":
+                risks.append("Directional edge is weak, reducing expected payoff")
+            else:
+                risks.append("No major acute risk flags, but execution timing still matters")
         return risks[:4]
 
     def _generate_explanation(
         self,
         regime_label: str,
         directional_scores: Dict[int, float],
+        directional_bias: str,
+        entry_quality: str,
         inefficiency_score: float,
         risk: RiskPenalty,
+        signal_agreement: float,
         macro_confidence: MacroConfidenceOverlay,
         shipping_context: ShippingSignalContext,
         composite_score: float,
+        recommendation: str,
+        override_reason: Optional[str],
         event_explanations: Optional[List[str]] = None,
     ) -> str:
         avg_directional = self._weighted_directional_score(directional_scores)
@@ -558,13 +804,26 @@ class CompositeDecisionEngine:
         elif shipping_context.shipping_conflict_score > 0.25:
             shipping_clause = " Shipping context is a headwind."
         explanation = (
-            f"Regime is {regime_label}. Average directional score is {avg_directional:.2f}, "
-            f"inefficiency score is {inefficiency_score:.2f}, and aggregate risk penalty is {risk.total_penalty:.2f}. "
-            f"Composite score is {composite_score:.2f}.{macro_clause}{shipping_clause}"
+            f"{self._human_bias_label(directional_bias)} directional momentum is observed across horizons (avg score {avg_directional:.2f}) under {regime_label}. "
+            f"Entry quality is {entry_quality} with inefficiency at {inefficiency_score:.2f} z and risk penalty at {risk.total_penalty:.2f}. "
+            f"Signal agreement is {signal_agreement:.2f}, leading to recommendation: {recommendation}."
+            f"{macro_clause}{shipping_clause}"
         )
+        if override_reason:
+            explanation = explanation + f" Override: {override_reason}"
         if event_explanations:
             explanation = explanation + " Event intelligence: " + " | ".join(event_explanations[:2])
         return explanation
+
+    def _human_bias_label(self, directional_bias: str) -> str:
+        labels = {
+            "strong_bullish": "Strong bullish",
+            "bullish": "Bullish",
+            "strong_bearish": "Strong bearish",
+            "bearish": "Bearish",
+            "neutral": "Neutral",
+        }
+        return labels.get(directional_bias, "Neutral")
 
     def _compute_final_confidence(
         self,

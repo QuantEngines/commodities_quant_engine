@@ -27,6 +27,15 @@ def make_price_frame(periods: int = 260) -> pd.DataFrame:
     return frame
 
 
+def make_stretched_price_frame(periods: int = 260) -> pd.DataFrame:
+    frame = make_price_frame(periods=periods)
+    frame.iloc[-1, frame.columns.get_loc("close")] = float(frame["close"].iloc[-2] * 1.18)
+    frame.iloc[-1, frame.columns.get_loc("high")] = float(frame["close"].iloc[-1] * 1.01)
+    frame.iloc[-1, frame.columns.get_loc("open")] = float(frame["close"].iloc[-1] * 0.99)
+    frame.iloc[-1, frame.columns.get_loc("low")] = float(frame["close"].iloc[-1] * 0.98)
+    return frame
+
+
 def make_bulk_positions(timestamp: datetime) -> pd.DataFrame:
     base = pd.Timestamp(timestamp) - pd.Timedelta(days=8)
     rows = []
@@ -70,6 +79,45 @@ def test_composite_engine_generates_auditable_signal_package():
     assert package.snapshot.signal_id == package.suggestion.signal_id
     assert "directional" in package.snapshot.component_scores
     assert package.quality_report.flag in {"good", "stale"}
+    assert package.suggestion.trade_recommendation
+    assert package.suggestion.entry_quality in {"Excellent", "Good", "Fair", "Poor", "Very Poor"}
+    assert 0.0 <= float(package.suggestion.directional_confidence or 0.0) <= 1.0
+    assert 0.0 <= float(package.suggestion.tradeability_confidence or 0.0) <= 1.0
+    assert 0.0 <= float(package.suggestion.data_quality_confidence or 0.0) <= 1.0
+    assert package.suggestion.component_contributions
+    assert len(package.suggestion.principal_risks) >= 1
+
+
+def test_regime_probability_stack_is_present_and_selected_has_positive_probability():
+    engine = CompositeDecisionEngine()
+    package = engine.generate_signal_package(make_price_frame(), "GOLD")
+
+    probabilities = package.suggestion.regime_probabilities
+    assert len(probabilities) >= 2
+    assert package.suggestion.regime_label in probabilities
+    assert float(probabilities[package.suggestion.regime_label]) > 0.0
+
+
+def test_stretched_price_can_force_wait_style_recommendation_with_explanation_override():
+    engine = CompositeDecisionEngine()
+    package = engine.generate_signal_package(make_stretched_price_frame(), "GOLD")
+
+    assert package.suggestion.entry_quality in {"Poor", "Very Poor", "Fair", "Good", "Excellent"}
+    if package.suggestion.trade_recommendation in {"Long Bias / Wait for Pullback", "Short Bias / Wait for Rally", "Regime Conflict / Avoid"}:
+        assert package.suggestion.override_reason
+    assert package.suggestion.explanation_summary
+
+
+def test_supportive_and_contradictory_signal_lists_are_explicit():
+    engine = CompositeDecisionEngine()
+    package = engine.generate_signal_package(make_price_frame(), "GOLD")
+
+    assert len(package.suggestion.supportive_signals) >= 1
+    assert isinstance(package.suggestion.contradictory_signals, list)
+    assert len(package.suggestion.key_risks) >= 1
+    assert package.suggestion.supportive_signals == package.suggestion.key_supporting_drivers
+    assert package.suggestion.contradictory_signals == package.suggestion.key_contradictory_drivers
+    assert package.suggestion.key_risks == package.suggestion.principal_risks
 
 
 def test_research_workflow_persists_signal_and_evaluation(tmp_path):

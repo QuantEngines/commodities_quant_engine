@@ -51,6 +51,97 @@ The repository was refactored from a mostly scaffolded signal stack into a resea
 9. Fit candidate parameter updates on historical evaluated signals using purged walk-forward validation.
 10. Save candidate and active parameter versions with evidence and safety checks.
 
+### Trader-Facing Decision Framework
+
+The signal engine now uses a structured decision hierarchy instead of a single flat score-to-label mapping:
+
+1. Regime assessment
+2. Directional bias
+3. Entry quality
+4. Signal agreement/conflict
+5. Risk overlay
+6. Composite trade recommendation
+
+This improves coherence between internal model components and the final recommendation presented to users.
+
+### Entry Quality
+
+`Entry Quality` is now a first-class decision field describing whether the current price location is attractive for execution.
+
+It is derived from:
+
+- pricing inefficiency
+- recent price extension versus trend baseline
+- mean-reversion pressure
+- volatility context
+
+Possible values:
+
+- `Excellent`
+- `Good`
+- `Fair`
+- `Poor`
+- `Very Poor`
+
+Entry quality directly affects the recommendation layer (for example, it can convert a directional bias into a wait-style recommendation).
+
+### Confidence Decomposition
+
+The engine now emits separate confidence dimensions instead of a single ambiguous number:
+
+- `directional_confidence`: confidence in price direction
+- `tradeability_confidence`: confidence that setup is executable now
+- `data_quality_confidence`: confidence derived from input-data quality
+
+The legacy `confidence_score` is preserved for backward compatibility, but trader-facing outputs emphasize the decomposed confidences.
+
+### Recommendation Labels
+
+Recommendations now follow a richer trader-oriented label set:
+
+- `Strong Long Candidate`
+- `Long Bias`
+- `Long Bias / Wait for Pullback`
+- `Watchlist Long`
+- `Neutral / No Edge`
+- `Watchlist Short`
+- `Short Bias / Wait for Rally`
+- `Short Bias`
+- `Strong Short Candidate`
+- `Regime Conflict / Avoid`
+
+### Regime Output Improvements
+
+Regime output now includes a top regime-probability stack (top 2-3 entries), and the selected regime is always assigned a valid non-zero probability.
+
+### Explainability Improvements
+
+Each suggestion now includes:
+
+- normalized component contribution labels (for example, `Strong Positive`, `Mild Negative`)
+- `dominant_component`
+- `override_reason` when execution is intentionally suppressed
+- explicit `supportive_signals`, `contradictory_signals`, and `key_risks`
+- narrative explanation aligned to the final recommendation
+
+### Output Schema (Trader View)
+
+Primary fields in the suggestion output now include:
+
+- commodity
+- timestamp
+- regime label + top regime probabilities
+- directional bias
+- entry quality
+- trade recommendation
+- directional/tradeability/data-quality confidence
+- component contributions
+- dominant component + override reason
+- supportive signals
+- contradictory signals
+- key risks
+- explanation summary
+
 ### Calibration And Drift Artifacts
 
 Evaluation now writes commodity-level calibration artifacts to the evaluation store:
@@ -404,7 +495,7 @@ From the parent directory of this repo:
 
 ```bash
 cd /path/to/parent/of/commodities_quant_engine
-python commodities_quant_engine/run_local.py
+python commodities_quant_engine/main.py
 ```
 
 If you run it with no commodity flags in an interactive terminal, it now prompts you to choose:
@@ -419,56 +510,56 @@ To limit a live run during testing:
 
 ```bash
 cd /path/to/parent/of/commodities_quant_engine
-python commodities_quant_engine/run_local.py --watch --refresh-seconds 30 --max-iterations 3 --commodity GOLD
+python commodities_quant_engine/main.py --watch --refresh-seconds 30 --max-iterations 3 --commodity GOLD
 ```
 
 To run with a real local file:
 
 ```bash
 cd /path/to/parent/of/commodities_quant_engine
-python commodities_quant_engine/run_local.py --commodity GOLD --price-file commodities_quant_engine/local_data/market/gold_ohlcv.csv
+python commodities_quant_engine/main.py --commodity GOLD --price-file commodities_quant_engine/local_data/market/gold_ohlcv.csv
 ```
 
 To print the markdown suggestion as well:
 
 ```bash
 cd /path/to/parent/of/commodities_quant_engine
-python commodities_quant_engine/run_local.py --show-markdown
+python commodities_quant_engine/main.py --show-markdown
 ```
 
 To list configured commodities and their latest signal summaries:
 
 ```bash
 cd /path/to/parent/of/commodities_quant_engine
-python commodities_quant_engine/run_local.py --list-commodities
+python commodities_quant_engine/main.py --list-commodities
 ```
 
 To run all configured commodities in one go:
 
 ```bash
 cd /path/to/parent/of/commodities_quant_engine
-python commodities_quant_engine/run_local.py --all-commodities
+python commodities_quant_engine/main.py --all-commodities
 ```
 
 To run only selected commodities:
 
 ```bash
 cd /path/to/parent/of/commodities_quant_engine
-python commodities_quant_engine/run_local.py --commodities GOLD SILVER COPPER
+python commodities_quant_engine/main.py --commodities GOLD SILVER COPPER
 ```
 
 To use configured local/provider data for all commodities and skip missing ones cleanly:
 
 ```bash
 cd /path/to/parent/of/commodities_quant_engine
-python commodities_quant_engine/run_local.py --all-commodities --use-provider --start-date 2025-01-01 --end-date 2025-12-31
+python commodities_quant_engine/main.py --all-commodities --use-provider --start-date 2025-01-01 --end-date 2025-12-31
 ```
 
 To use the optional `commodities-api.com` provider for mapped commodities:
 
 ```bash
 cd /path/to/parent/of/commodities_quant_engine
-python commodities_quant_engine/run_local.py --commodities GOLD SILVER --provider COMMODITIES_API --start-date 2025-01-01 --end-date 2025-12-31
+python commodities_quant_engine/main.py --commodities GOLD SILVER --provider COMMODITIES_API --start-date 2025-01-01 --end-date 2025-12-31
 ```
 
 The `COMMODITIES_API` path is intentionally opt-in. It is useful for reference/spot-style daily series where you have supplied a symbol map, but it should not be confused with exact MCX contract-chain data.

@@ -27,7 +27,7 @@ from commodities_quant_engine.analytics.factor_timing import FactorTimingEngine
 from commodities_quant_engine.config.settings import settings
 from commodities_quant_engine.data.storage.local import LocalStorage
 from commodities_quant_engine.portfolio.optimization_engine import portfolio_optimization_engine
-from commodities_quant_engine.run_local import build_demo_price_data
+from commodities_quant_engine.main import build_demo_price_data
 from commodities_quant_engine.workflow import ResearchWorkflow
 
 

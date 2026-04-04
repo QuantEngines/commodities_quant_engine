@@ -4,7 +4,6 @@ Replaces scattered formatting logic from main.py.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
-import pandas as pd
 
 
 def format_optional_number(value: Optional[float], digits: int = 2, signed: bool = False) -> str:
@@ -99,9 +98,11 @@ def format_decision_box(suggestion: Any) -> str:
         f"║ {suggestion.commodity:^58} ║",
         f"║ Signal ID: {(suggestion.signal_id or 'n/a'):<47} ║",
         "╠════════════════════════════════════════════════════════════╣",
-        f"║ Decision:  {suggestion.final_category:<50} ║",
-        f"║ Direction: {suggestion.preferred_direction:<50} ║",
-        f"║ Confidence: {format_optional_number(suggestion.confidence_score, digits=3):<48} ║",
+        f"║ Recommendation: {suggestion.trade_recommendation or suggestion.final_category:<44} ║",
+        f"║ Directional Bias: {suggestion.directional_bias or suggestion.preferred_direction:<43} ║",
+        f"║ Entry Quality: {suggestion.entry_quality:<46} ║",
+        f"║ Directional Conf: {format_optional_number(suggestion.directional_confidence or suggestion.confidence_score, digits=3):<42} ║",
+        f"║ Tradeability Conf: {format_optional_number(suggestion.tradeability_confidence or suggestion.confidence_score, digits=3):<41} ║",
         f"║ Composite Score: {format_optional_number(suggestion.composite_score, digits=3):<42} ║",
         "╠════════════════════════════════════════════════════════════╣",
         f"║ Regime: {suggestion.regime_label:<52} ║",
@@ -117,9 +118,7 @@ def format_signal_summary(suggestion: Any, evaluation: Any = None) -> str:
     diagnostics = suggestion.diagnostics or {}
     component_scores = diagnostics.get("component_scores", {})
     directional_scores = suggestion.directional_scores or {}
-    directional_confidences = diagnostics.get("directional_confidences", {})
     feature_vector = diagnostics.get("feature_vector", {})
-    event_features = diagnostics.get("event_intelligence_features", {})
     
     output = []
     
@@ -133,6 +132,7 @@ def format_signal_summary(suggestion: Any, evaluation: Any = None) -> str:
         "Contract": suggestion.active_contract,
         "Model Version": suggestion.model_version or "default",
         "Config Version": suggestion.config_version or "default",
+        "Data Quality Confidence": format_optional_number(suggestion.data_quality_confidence),
     }, "Signal Metadata"))
     
     # Directional structure
@@ -149,14 +149,26 @@ def format_signal_summary(suggestion: Any, evaluation: Any = None) -> str:
         output.append(format_score_table(component_scores, "Component Breakdown", limit=8))
     
     # Regime and macro context
+    top_regimes = sorted((suggestion.regime_probabilities or {}).items(), key=lambda item: float(item[1]), reverse=True)[:3]
     regime_info = {
         "Label": suggestion.regime_label,
+        "Top Regimes": ", ".join(f"{name}:{float(prob):.2f}" for name, prob in top_regimes) if top_regimes else "n/a",
         "Macro Alignment": format_optional_number(suggestion.macro_alignment_score),
         "Macro Conflict": format_optional_number(suggestion.macro_conflict_score),
         "Macro Event Risk": "High" if suggestion.macro_event_risk_flag else "Low",
         "Confidence Adj.": format_optional_number(suggestion.macro_confidence_adjustment, signed=True),
     }
     output.append(format_metrics_table(regime_info, "Regime Context"))
+
+    if getattr(suggestion, "component_contributions", None):
+        output.append(format_metrics_table(suggestion.component_contributions, "Normalized Component Contributions"))
+    output.append(format_metrics_table(
+        {
+            "Dominant Component": suggestion.dominant_component or "n/a",
+            "Override Reason": suggestion.override_reason or "None",
+        },
+        "Decision Overrides",
+    ))
     
     # Shipping context (if available)
     if suggestion.shipping_summary:
@@ -180,9 +192,9 @@ def format_signal_summary(suggestion: Any, evaluation: Any = None) -> str:
     
     # Drivers and risks
     output.append("\nSignal Drivers & Risks:")
-    output.append(f"  Supporting: {compact_list(suggestion.key_supporting_drivers, limit=4)}")
-    output.append(f"  Contradictions: {compact_list(suggestion.key_contradictory_drivers, limit=3)}")
-    output.append(f"  Principal Risks: {compact_list(suggestion.principal_risks, limit=4)}")
+    output.append(f"  Supportive Signals: {compact_list(suggestion.supportive_signals or suggestion.key_supporting_drivers, limit=4)}")
+    output.append(f"  Contradictory Signals: {compact_list(suggestion.contradictory_signals or suggestion.key_contradictory_drivers, limit=3)}")
+    output.append(f"  Key Risks: {compact_list(suggestion.key_risks or suggestion.principal_risks, limit=4)}")
     
     # Macro features
     if suggestion.key_macro_drivers:
@@ -234,9 +246,9 @@ def format_multi_commodity_table(entries: List[Dict[str, Any]]) -> str:
             lines.append(f"║ {entry['commodity']:<10} │ ✗ {entry.get('message', 'Skipped'):<65} ║")
         else:
             suggestion = entry["results"]["signal_package"].suggestion
-            status = f"✓ {suggestion.final_category:<5} │ " \
-                     f"{suggestion.preferred_direction:<4} │ " \
-                     f"Conf: {suggestion.confidence_score:.2f}"
+            status = f"✓ {suggestion.trade_recommendation or suggestion.final_category:<24} │ " \
+                     f"{(suggestion.directional_bias or suggestion.preferred_direction):<14} │ " \
+                     f"TConf: {float(suggestion.tradeability_confidence or suggestion.confidence_score):.2f}"
             lines.append(f"║ {entry['commodity']:<10} │ {status:<68} ║")
     
     lines.append("╚════════════════════════════════════════════════════════════════════════════════════╝")

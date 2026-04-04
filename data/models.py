@@ -196,6 +196,18 @@ class Suggestion:
     explanation_summary: str
     data_quality_flag: str
     confidence_score: float
+    directional_bias: Optional[str] = None
+    entry_quality: str = "Fair"
+    trade_recommendation: Optional[str] = None
+    directional_confidence: Optional[float] = None
+    tradeability_confidence: Optional[float] = None
+    data_quality_confidence: Optional[float] = None
+    component_contributions: Dict[str, str] = field(default_factory=dict)
+    dominant_component: Optional[str] = None
+    override_reason: Optional[str] = None
+    supportive_signals: List[str] = field(default_factory=list)
+    contradictory_signals: List[str] = field(default_factory=list)
+    key_risks: List[str] = field(default_factory=list)
     signal_id: Optional[str] = None
     model_version: Optional[str] = None
     config_version: Optional[str] = None
@@ -232,6 +244,15 @@ class Suggestion:
         shipping_features = diagnostics.get("shipping_features", {})
         quality_issues = diagnostics.get("quality_issues", [])
         regime_probability = _primary_regime_probability(self.regime_label, self.regime_probabilities or {})
+        top_regimes = sorted((self.regime_probabilities or {}).items(), key=lambda item: float(item[1]), reverse=True)[:3]
+        regime_stack = ", ".join(f"{name}={float(prob):.2f}" for name, prob in top_regimes) if top_regimes else "n/a"
+        recommendation = self.trade_recommendation or self.final_category
+        directional_confidence = self.directional_confidence if self.directional_confidence is not None else self.confidence_score
+        tradeability_confidence = self.tradeability_confidence if self.tradeability_confidence is not None else self.confidence_score
+        data_quality_confidence = self.data_quality_confidence if self.data_quality_confidence is not None else (1.0 if self.data_quality_flag == "good" else 0.65)
+        supportive = self.supportive_signals or self.key_supporting_drivers
+        contradictory = self.contradictory_signals or self.key_contradictory_drivers
+        key_risks = self.key_risks or self.principal_risks
         return f"""
 # {self.commodity} Trading Suggestion
 
@@ -240,9 +261,15 @@ class Suggestion:
 - **Exchange:** {self.exchange}
 - **Active Contract:** {self.active_contract}
 - **Signal ID:** {self.signal_id or "n/a"}
-- **Decision:** {self.final_category} | direction={self.preferred_direction} | confidence={self.confidence_score:.2f} | score={self.composite_score:.2f}
+    - **Directional Bias:** {self.directional_bias or self.preferred_direction}
+    - **Entry Quality:** {self.entry_quality}
+    - **Trade Recommendation:** {recommendation}
+    - **Confidence Split:** directional={_format_optional_number(directional_confidence, digits=2)} | tradeability={_format_optional_number(tradeability_confidence, digits=2)} | data_quality={_format_optional_number(data_quality_confidence, digits=2)}
+    - **Composite Score:** {self.composite_score:.2f}
 - **Positioning:** entry_style={self.suggested_entry_style} | horizon={self.suggested_holding_horizon}D | data_quality={self.data_quality_flag}
-- **Regime:** {self.regime_label} | p={_format_optional_number(regime_probability, digits=2)} | macro_align={_format_optional_number(self.macro_alignment_score, digits=2)} | macro_conflict={_format_optional_number(self.macro_conflict_score, digits=2)} | event_risk={'high' if self.macro_event_risk_flag else 'low'} | macro_conf_adj={_format_optional_number(self.macro_confidence_adjustment, digits=2, signed=True)}
+    - **Regime:** {self.regime_label} | p={_format_optional_number(regime_probability, digits=2)}
+    - **Regime Probabilities (Top):** {regime_stack}
+    - **Macro Context:** align={_format_optional_number(self.macro_alignment_score, digits=2)} | conflict={_format_optional_number(self.macro_conflict_score, digits=2)} | event_risk={'high' if self.macro_event_risk_flag else 'low'} | macro_conf_adj={_format_optional_number(self.macro_confidence_adjustment, digits=2, signed=True)}
 - **Shipping:** summary={self.shipping_summary or "Not available"} | align={_format_optional_number(self.shipping_alignment_score, digits=2)} | conflict={_format_optional_number(self.shipping_conflict_score, digits=2)} | risk={'high' if self.shipping_risk_flag else 'low'} | ship_quality={_format_optional_number(self.shipping_data_quality_score, digits=2)}
 - **Model Lineage:** model={self.model_version or "n/a"} | config={self.config_version or "n/a"}
 
@@ -256,13 +283,16 @@ class Suggestion:
 - **Event Overlay:** {_format_score_map(event_features, limit=4)}
 - **Shipping Overlay:** {_format_score_map(shipping_features, limit=5)}
 - **Macro Features:** {_format_score_map(self.macro_feature_highlights, limit=5)}
+- **Component Contributions:** {_compact_list([f"{k}: {v}" for k, v in self.component_contributions.items()], limit=6)}
+- **Dominant Component:** {self.dominant_component or "n/a"}
+- **Override Reason:** {self.override_reason or "None"}
 
 ## Thesis
 {self.explanation_summary}
 
-- **Supporting Drivers:** {_compact_list(self.key_supporting_drivers, limit=4)}
-- **Contradictions:** {_compact_list(self.key_contradictory_drivers, limit=3)}
-- **Principal Risks:** {_compact_list(self.principal_risks, limit=4)}
+- **Supportive Signals:** {_compact_list(supportive, limit=4)}
+- **Contradictory Signals:** {_compact_list(contradictory, limit=3)}
+- **Key Risks:** {_compact_list(key_risks, limit=4)}
 - **Quality Issues:** {_compact_list(quality_issues, limit=4)}
 
 ## Macro Context

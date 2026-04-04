@@ -9,7 +9,7 @@ import pandas as pd
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from commodities_quant_engine.run_local import build_demo_price_data
+from commodities_quant_engine.main import build_demo_price_data
 from commodities_quant_engine.shipping import ShippingFeaturePipeline
 from commodities_quant_engine.workflow import ResearchWorkflow
 
